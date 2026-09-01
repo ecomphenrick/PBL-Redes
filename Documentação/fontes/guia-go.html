@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Guia Go: Cliente-Servidor TCP</title>
+<style>
+  @page { size: A4; margin: 17mm 16mm 16mm 16mm; }
+
+  :root {
+    --tinta: #1a1a1a;
+    --suave: #5c5c5c;
+    --linha: #d8d8d8;
+    --azul: #1c4f7c;
+    --azul-claro: #eef4f9;
+    --fundo-cod: #f7f7f4;
+    --borda-cod: #e2e2dc;
+    --alerta: #8a4b0a;
+    --alerta-fundo: #fdf6ec;
+    --ok: #2b5f3a;
+    --ok-fundo: #f0f6f1;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: "Charter", "Georgia", "Times New Roman", serif;
+    font-size: 10.6pt;
+    line-height: 1.55;
+    color: var(--tinta);
+    margin: 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.25;
+    margin: 0;
+  }
+
+  /* ---------- capa ---------- */
+  .capa {
+    height: 250mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+  }
+  .capa .etiqueta {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 9pt;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--suave);
+    margin-bottom: 10mm;
+  }
+  .capa h1 {
+    font-size: 30pt;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 5mm;
+  }
+  .capa .sub {
+    font-size: 14pt;
+    color: var(--suave);
+    font-style: italic;
+    margin-bottom: 14mm;
+  }
+  .capa .regua { height: 3px; background: var(--azul); width: 60mm; margin-bottom: 14mm; }
+  .capa .meta {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 9.5pt;
+    color: var(--suave);
+    line-height: 2;
+  }
+  .capa .meta b { color: var(--tinta); font-weight: 600; }
+
+  /* ---------- sumario ---------- */
+  .sumario { page-break-after: always; }
+  .sumario ol { font-family: "Segoe UI", Arial, sans-serif; font-size: 10pt; line-height: 2.1; padding-left: 5mm; }
+  .sumario li { color: var(--tinta); }
+  .sumario li span { color: var(--suave); font-size: 9pt; }
+
+  /* ---------- titulos ---------- */
+  h2 {
+    font-size: 16pt;
+    font-weight: 600;
+    color: var(--azul);
+    margin-top: 11mm;
+    padding-bottom: 2mm;
+    border-bottom: 2px solid var(--azul);
+    page-break-after: avoid;
+  }
+  h2.nova { page-break-before: always; margin-top: 0; }
+  h3 {
+    font-size: 12pt;
+    font-weight: 600;
+    margin-top: 7mm;
+    margin-bottom: 2mm;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10.5pt;
+    font-weight: 600;
+    color: var(--suave);
+    margin-top: 5mm;
+    margin-bottom: 1.5mm;
+    page-break-after: avoid;
+  }
+
+  p { margin: 0 0 3.2mm 0; text-align: justify; }
+  ul, ol { margin: 0 0 3.2mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1.2mm; }
+
+  b, strong { font-weight: 600; }
+
+  /* ---------- codigo ---------- */
+  code {
+    font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+    font-size: 0.88em;
+    background: var(--fundo-cod);
+    border: 1px solid var(--borda-cod);
+    border-radius: 2px;
+    padding: 0.5pt 2pt;
+  }
+  pre {
+    font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+    font-size: 8.9pt;
+    line-height: 1.5;
+    background: var(--fundo-cod);
+    border: 1px solid var(--borda-cod);
+    border-left: 3px solid var(--azul);
+    border-radius: 3px;
+    padding: 3mm 4mm;
+    margin: 0 0 3.5mm 0;
+    overflow-x: auto;
+    white-space: pre;
+    page-break-inside: avoid;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 1em; }
+
+  .tk-kw  { color: #a0288c; font-weight: 600; }
+  .tk-str { color: #1a6b2e; }
+  .tk-com { color: #7a7a7a; font-style: italic; }
+  .tk-num { color: #b05a00; }
+
+  /* ---------- caixas ---------- */
+  .caixa, .nota, .alerta {
+    border-left: 3px solid var(--azul);
+    background: var(--azul-claro);
+    padding: 3mm 4mm;
+    margin: 0 0 3.5mm 0;
+    page-break-inside: avoid;
+  }
+  .caixa .rot, .nota .rot, .alerta .rot {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--azul);
+    display: block;
+    margin-bottom: 1.5mm;
+  }
+  .caixa p:last-child, .nota p:last-child, .alerta p:last-child { margin-bottom: 0; }
+
+  .alerta { border-left-color: var(--alerta); background: var(--alerta-fundo); }
+  .alerta .rot { color: var(--alerta); }
+  .nota { border-left-color: var(--ok); background: var(--ok-fundo); }
+  .nota .rot { color: var(--ok); }
+
+  /* ---------- tabelas ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8.8pt;
+    margin: 0 0 4mm 0;
+    page-break-inside: avoid;
+  }
+  th {
+    background: var(--azul);
+    color: #fff;
+    text-align: left;
+    padding: 2mm 2.5mm;
+    font-weight: 600;
+    font-size: 8.5pt;
+  }
+  td {
+    padding: 1.8mm 2.5mm;
+    border-bottom: 1px solid var(--linha);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #fafafa; }
+  td code, th code { font-size: 0.92em; background: #fff; }
+
+  /* ---------- diagrama ---------- */
+  .diagrama {
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 8.2pt;
+    line-height: 1.45;
+    background: #fff;
+    border: 1px solid var(--linha);
+    border-radius: 3px;
+    padding: 4mm;
+    margin: 0 0 4mm 0;
+    white-space: pre;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+
+  .legenda {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8.2pt;
+    color: var(--suave);
+    text-align: center;
+    margin: -2.5mm 0 4mm 0;
+  }
+
+  .arquivo {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: var(--suave);
+    background: #eeeeea;
+    border: 1px solid var(--borda-cod);
+    border-bottom: none;
+    border-radius: 3px 3px 0 0;
+    padding: 1.2mm 3mm;
+    display: inline-block;
+    margin-bottom: 0;
+  }
+  .arquivo + pre { border-radius: 0 3px 3px 3px; margin-top: 0; }
+</style>
+</head>
+<body>
+
+<!-- ================= CAPA ================= -->
+<section class="capa">
+  <div class="etiqueta">Vaijunto &middot; Sistema de Caronas Compartilhadas</div>
+  <h1>Cliente e Servidor TCP em Go</h1>
+  <div class="sub">Um guia linha por linha para quem vem de Python e Java</div>
+  <div class="regua"></div>
+  <div class="meta">
+    <b>Disciplina</b> &nbsp; Concorrência e Conectividade (PBL)<br>
+    <b>Exemplo</b> &nbsp; <code>Aprendizado/01-eco</code><br>
+    <b>Versão do Go</b> &nbsp; 1.27<br>
+    <b>Pré-requisito</b> &nbsp; lógica de programação; nenhum conhecimento de redes
+  </div>
+</section>
+
+<!-- ================= SUMARIO ================= -->
+<section class="sumario">
+  <h2 style="margin-top:0">Sumário</h2>
+  <ol>
+    <li>O que vamos construir <span>&mdash; e por que um programa bobo ensina tanto</span></li>
+    <li>Go visto de Python e de Java <span>&mdash; o mapa mental</span></li>
+    <li>Anatomia de um programa Go <span>&mdash; pacote, import, go.mod</span></li>
+    <li>As seis estranhezas <span>&mdash; o que mais choca quem vem de fora</span></li>
+    <li>Como um socket TCP funciona <span>&mdash; a teoria mínima</span></li>
+    <li>O servidor, linha por linha</li>
+    <li>O cliente, linha por linha</li>
+    <li>O problema que o TCP não resolve <span>&mdash; e por que existe o bufio</span></li>
+    <li>Concorrência: o que já temos e o perigo que vem</li>
+    <li>Como rodar e três experimentos</li>
+    <li>Cola de tradução <span>&mdash; Python, Java e Go lado a lado</span></li>
+    <li>Próximos passos rumo ao Vaijunto</li>
+  </ol>
+</section>
+
+<!-- ================= 1 ================= -->
+<h2 class="nova">1. O que vamos construir</h2>
+
+<p>Um <b>servidor de eco</b>. Você digita uma frase no cliente, ela viaja pela rede, o servidor recebe e devolve a mesma frase com <code>ECO:</code> na frente.</p>
+
+<p>É deliberadamente bobo. O valor não está no que o programa faz, está em <b>toda a mecânica de rede e concorrência do projeto final já estar presente aqui dentro</b>, em menos de cem linhas. Trocar o texto <code>ECO:</code> por &ldquo;reservar assento na carona 42&rdquo; é o trabalho do resto do semestre; o esqueleto não muda.</p>
+
+<div class="diagrama">   TERMINAL 1                                  TERMINAL 2
+  ┌──────────────┐                            ┌──────────────┐
+  │   SERVIDOR   │                            │   CLIENTE    │
+  │              │      "ola mundo\n"         │              │
+  │ porta :8080  │ &lt;───────────────────────── │  você digita │
+  │              │                            │              │
+  │   ouvindo    │      "ECO: ola mundo\n"    │              │
+  │              │ ─────────────────────────&gt; │  aparece     │
+  └──────────────┘                            └──────────────┘
+                     conexão TCP</div>
+<div class="legenda">O fluxo completo: dois programas independentes conversando por uma conexão TCP.</div>
+
+<h3>Os arquivos</h3>
+
+<pre>Aprendizado/01-eco/
+  go.mod                  identidade do projeto
+  servidor/main.go        abre a porta e atende clientes
+  cliente/main.go         conecta e conversa</pre>
+
+<div class="caixa">
+  <span class="rot">Por que dois programas separados</span>
+  <p>Cliente e servidor são <b>executáveis distintos</b>, que rodam em processos distintos e poderiam estar em máquinas distintas. Isso não é detalhe de organização: é a essência da matéria. Eles não compartilham memória, não enxergam as variáveis um do outro. A <b>única</b> coisa que os liga é uma sequência de bytes atravessando a rede.</p>
+</div>
+
+<!-- ================= 2 ================= -->
+<h2 class="nova">2. Go visto de Python e de Java</h2>
+
+<p>Antes de qualquer linha de código, vale posicionar a linguagem. Go foi criada no Google em 2009 justamente para escrever servidores, e cada decisão de projeto dela responde à pergunta &ldquo;como fazer software de rede sem sofrer&rdquo;.</p>
+
+<table>
+  <tr><th style="width:22%">Aspecto</th><th style="width:26%">Python</th><th style="width:26%">Java</th><th style="width:26%">Go</th></tr>
+  <tr><td><b>Tipagem</b></td><td>Dinâmica, erro só ao rodar</td><td>Estática, muito verbosa</td><td>Estática, mas <b>inferida</b> &mdash; parece Python, protege como Java</td></tr>
+  <tr><td><b>Execução</b></td><td>Interpretada</td><td>Bytecode na JVM</td><td>Compilada para binário nativo</td></tr>
+  <tr><td><b>Distribuição</b></td><td>Precisa do interpretador</td><td>Precisa da JVM</td><td><b>Um arquivo só</b>, sem nada instalado</td></tr>
+  <tr><td><b>Erros</b></td><td><code>try / except</code></td><td><code>try / catch</code></td><td>Erro é <b>valor de retorno</b>, sem exceções</td></tr>
+  <tr><td><b>Concorrência</b></td><td>Threads travadas pelo GIL</td><td>Threads reais, mas caras</td><td><b>Goroutines</b>: reais e baratíssimas</td></tr>
+  <tr><td><b>Herança</b></td><td>Sim, e múltipla</td><td>Sim</td><td><b>Não existe</b> &mdash; só composição</td></tr>
+  <tr><td><b>Tamanho</b></td><td>35 palavras-chave</td><td>50+ palavras-chave</td><td><b>25 palavras-chave</b></td></tr>
+  <tr><td><b>Formatação</b></td><td>PEP8, opcional</td><td>Depende da IDE</td><td><code>gofmt</code> oficial: <b>acabou a discussão</b></td></tr>
+</table>
+
+<div class="nota">
+  <span class="rot">A boa notícia</span>
+  <p>Go é menor que as duas linguagens que você já conhece. Não há herança, sobrecarga de operador, construtores, anotações, decoradores, generics no dia a dia, nem exceções. A curva não é longa &mdash; é curta e íngreme: poucas ideias novas, mas que precisam ser realmente entendidas.</p>
+</div>
+
+<h3>A frase que resume a filosofia</h3>
+<p>Em Java você descreve <i>o que as coisas são</i> (classes, hierarquias, interfaces). Em Python você descreve <i>o que quer</i>, e a linguagem se vira. Em Go você descreve <b>exatamente o que a máquina faz, passo a passo, sem mágica escondida</b>. É mais explícito e às vezes mais repetitivo &mdash; e é precisamente por isso que serve para um trabalho cujo objetivo é você entender cada passo.</p>
+
+<!-- ================= 3 ================= -->
+<h2 class="nova">3. Anatomia de um programa Go</h2>
+
+<h3>O arquivo go.mod</h3>
+<div class="arquivo">Aprendizado/01-eco/go.mod</div>
+<pre><code>module vaijunto/aprendizado/eco
+
+go 1.27</code></pre>
+
+<p>É o <code>requirements.txt</code> do Python ou o <code>pom.xml</code> do Maven &mdash; só que quase vazio, porque <b>este projeto não tem nenhuma dependência externa</b>. Tudo que usamos vem com a linguagem.</p>
+
+<ul>
+  <li><code>module</code> dá um nome ao projeto. É o identificador usado se alguém importar seu código.</li>
+  <li><code>go 1.27</code> declara a versão mínima da linguagem.</li>
+</ul>
+
+<p>Quando um dia você precisar de uma biblioteca de terceiros, o comando <code>go get</code> adiciona uma linha <code>require</code> aqui. Para este projeto, ele vai continuar assim.</p>
+
+<h3>O cabeçalho de todo arquivo .go</h3>
+<pre><code>package main
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+)</code></pre>
+
+<h4>package main</h4>
+<p>Todo arquivo Go pertence a um pacote. <b><code>main</code> é um nome mágico</b>: significa &ldquo;isto é um programa executável&rdquo;. Qualquer outro nome produziria uma biblioteca, sem como rodar.</p>
+<p>Equivalência mental: é o <code>if __name__ == "__main__"</code> do Python, ou a classe que tem o <code>public static void main</code> em Java &mdash; só que declarado no topo do arquivo, não escondido no meio dele.</p>
+
+<h4>import</h4>
+<p>Traz pacotes para o arquivo. Os três aqui vêm todos da biblioteca padrão:</p>
+<ul>
+  <li><code>net</code> &mdash; a rede. É onde vive o socket TCP.</li>
+  <li><code>bufio</code> &mdash; leitura com buffer. O motivo aparece na seção 8.</li>
+  <li><code>fmt</code> &mdash; formatação e impressão de texto. O <code>print</code> do Python, o <code>System.out</code> do Java.</li>
+</ul>
+
+<div class="alerta">
+  <span class="rot">Estranheza número zero</span>
+  <p><b>Importar um pacote e não usar é erro de compilação.</b> Não é aviso, não é lint: o programa simplesmente não compila. O mesmo vale para variáveis declaradas e não usadas.</p>
+  <p>Incomoda muito nos primeiros dias &mdash; em Python e Java isso passa batido para sempre. Mas o efeito é que <b>não existe código morto</b> em projeto Go, e é impossível deixar um import esquecido de uma tentativa abandonada.</p>
+</div>
+
+<h4>func main()</h4>
+<p>A função <code>main</code> dentro do pacote <code>main</code> é o ponto de entrada. Quando o programa inicia, a execução começa nela; quando ela termina, <b>o processo inteiro morre</b>. Guarde essa última parte, ela volta a importar na seção 9.</p>
+
+<!-- ================= 4 ================= -->
+<h2 class="nova">4. As seis estranhezas</h2>
+
+<p>Estas são as ideias que fazem alguém vindo de Python ou Java travar. Vale ler esta seção com calma: depois dela, o código dos capítulos 6 e 7 fica quase óbvio.</p>
+
+<h3>4.1 &nbsp; O operador :=</h3>
+<pre><code>ouvinte, err := net.Listen("tcp", ":8080")   // cria e atribui
+err = outraCoisa()                            // só atribui, já existe</code></pre>
+<p><code>:=</code> declara a variável <b>e</b> atribui o valor, deduzindo o tipo sozinho. É a ponte entre os dois mundos que você conhece: você escreve com a leveza do Python, mas o tipo fica <b>fixo e verificado pelo compilador</b> como em Java.</p>
+<p>Depois de criada, usa-se <code>=</code>. Confundir os dois é o erro mais comum da primeira semana. A regra: <code>:=</code> só na primeira vez.</p>
+
+<h3>4.2 &nbsp; Retorno múltiplo e erro como valor</h3>
+<pre><code>conexao, err := ouvinte.Accept()
+if err != nil {
+	fmt.Println("deu errado:", err)
+	return
+}
+// daqui para baixo, conexao é confiável</code></pre>
+
+<p>Esta é a maior diferença cultural. Em Python e em Java, uma função que falha <b>lança</b> uma exceção, e ela sobe pela pilha até alguém capturar. Em Go <b>não existem exceções</b>. Uma função que pode falhar devolve dois valores: o resultado e o erro, lado a lado.</p>
+
+<p><code>nil</code> é o &ldquo;nada&rdquo; de Go &mdash; o <code>None</code> do Python, o <code>null</code> do Java. Então <code>if err != nil</code> lê-se literalmente: <i>&ldquo;o erro é diferente de nada? então algo falhou&rdquo;</i>.</p>
+
+<table>
+  <tr><th style="width:50%">Java / Python</th><th style="width:50%">Go</th></tr>
+  <tr><td>O erro é invisível na assinatura da função</td><td>O erro <b>está escrito</b> no retorno; impossível ignorar sem querer</td></tr>
+  <tr><td>Pode ser tratado longe de onde nasceu</td><td>É tratado <b>na linha seguinte</b>, sempre</td></tr>
+  <tr><td>Um <code>catch</code> genérico esconde tudo</td><td>Cada falha é decidida individualmente</td></tr>
+  <tr><td>Código enxuto no caminho feliz</td><td><b>Repetitivo</b> &mdash; a crítica justa que se faz a Go</td></tr>
+</table>
+
+<div class="caixa">
+  <span class="rot">Vale a pena?</span>
+  <p>Em um servidor, sim. A pergunta &ldquo;o que acontece se <i>esta</i> operação falhar?&rdquo; tem resposta diferente em cada ponto: às vezes derruba tudo, às vezes ignora e segue, às vezes tenta de novo. Você vai ver essa decisão sendo tomada de forma diferente três vezes no nosso servidor. Com exceções, essas três situações pareceriam iguais.</p>
+</div>
+
+<h3>4.3 &nbsp; defer</h3>
+<pre><code>ouvinte, err := net.Listen("tcp", ":8080")
+if err != nil { return }
+defer ouvinte.Close()      // roda quando a função acabar, aconteça o que acontecer</code></pre>
+
+<p><code>defer</code> agenda uma linha para ser executada <b>quando a função terminar</b> &mdash; por retorno normal, por <code>return</code> no meio, ou por pane. É o <code>finally</code> do Java, o <code>with</code> do Python, o <code>try-with-resources</code>.</p>
+
+<p>A vantagem sobre os três: você escreve o fechamento <b>uma linha depois</b> da abertura, e não vinte linhas abaixo, no fim de um bloco. Abriu, já garantiu que fecha. Isso praticamente elimina a classe de bugs de recurso vazado &mdash; que, em um servidor, significa acumular conexões mortas até travar a máquina.</p>
+
+<h3>4.4 &nbsp; Goroutines</h3>
+<pre><code>go atender(conexao)   // roda em paralelo; não espera terminar</code></pre>
+
+<p>A palavra <code>go</code> na frente de uma chamada faz a função rodar <b>em paralelo</b>, e a execução continua imediatamente na linha seguinte sem esperar.</p>
+
+<p>Compare com o que você conhece:</p>
+
+<table>
+  <tr><th style="width:33%">Python</th><th style="width:33%">Java</th><th style="width:34%">Go</th></tr>
+  <tr>
+    <td><code>t = Thread(target=f)</code><br><code>t.start()</code></td>
+    <td><code>new Thread(() -&gt; f())</code><br><code>.start();</code></td>
+    <td><code>go f()</code></td>
+  </tr>
+  <tr>
+    <td>Trava no GIL: <b>não roda em paralelo de verdade</b></td>
+    <td>Paralelismo real, mas <b>~1 MB por thread</b></td>
+    <td>Paralelismo real, <b>~2 KB por goroutine</b></td>
+  </tr>
+  <tr>
+    <td>Centenas, com esforço</td>
+    <td>Alguns milhares no limite</td>
+    <td><b>Centenas de milhares</b>, tranquilamente</td>
+  </tr>
+</table>
+
+<p>A diferença de custo não é um detalhe de performance: ela <b>muda a arquitetura possível</b>. Em Java, uma thread por cliente conectado é caro o bastante para você precisar de pools e filas. Em Go, uma goroutine por cliente é o jeito normal, óbvio e recomendado de escrever. O código fica linear e legível, e mesmo assim escala.</p>
+
+<h3>4.5 &nbsp; Valor ou ponteiro</h3>
+<pre><code>func mudar(c Carona)  { c.Assentos = 0 }   // mexe numa CÓPIA, não muda nada
+func mudar(c *Carona) { c.Assentos = 0 }   // mexe no ORIGINAL</code></pre>
+
+<p>Em Python e em Java, objetos são passados por referência: se a função altera o objeto, a alteração aparece fora. <b>Em Go, structs são copiados por padrão.</b> Passar um <code>struct</code> para uma função entrega a ela um clone.</p>
+
+<p>O sintoma clássico do iniciante: &ldquo;eu alterei o assento e não mudou nada&rdquo;. Alterou &mdash; na cópia, que morreu no fim da função.</p>
+
+<div class="nota">
+  <span class="rot">Regra prática</span>
+  <p>Se a função só <b>lê</b>, passe o valor. Se ela precisa <b>modificar</b>, use <code>*</code>. Você vai usar isso o tempo todo no Vaijunto, porque reservar assento é modificar.</p>
+</div>
+
+<h3>4.6 &nbsp; O descarte _</h3>
+<pre><code>_, err = fmt.Fprint(conexao, texto)   // ignoro o 1º retorno de propósito</code></pre>
+<p>Lembra que variável não usada é erro de compilação? O <code>_</code> é como você diz explicitamente ao compilador: <i>&ldquo;sei que existe um valor aqui e estou descartando de propósito&rdquo;</i>. Descarte acidental deixa de existir; ele passa a ser sempre uma decisão visível no código.</p>
+
+<!-- ================= 5 ================= -->
+<h2 class="nova">5. Como um socket TCP funciona</h2>
+
+<p>Esta é a teoria mínima. Sem ela o código da próxima seção vira decoreba.</p>
+
+<h3>O que é um socket</h3>
+<p>Um <b>socket</b> é a tomada por onde um programa fala com a rede. Uma vez conectado, você o trata como um cano de bytes: escreve de um lado, sai do outro. Todo o trabalho de partir os dados em pacotes, mandar pela placa de rede, remontar do outro lado e reordenar o que chegou fora de ordem é feito pelo sistema operacional.</p>
+
+<h3>O que o TCP garante</h3>
+<table>
+  <tr><th style="width:50%">TCP garante</th><th style="width:50%">TCP <b>não</b> garante</th></tr>
+  <tr><td>Que os bytes chegam</td><td>Onde as mensagens começam e terminam</td></tr>
+  <tr><td>Que chegam <b>na ordem enviada</b></td><td>Que chegam agrupados como você enviou</td></tr>
+  <tr><td>Que não vêm corrompidos</td><td>Que o outro lado entendeu o significado</td></tr>
+</table>
+<p>A coluna da direita é responsabilidade sua, e é o assunto da seção 8.</p>
+
+<h3>Os dois papéis</h3>
+<p>Cliente e servidor são assimétricos, e cada um tem seu próprio verbo:</p>
+
+<table>
+  <tr><th style="width:50%">Servidor &mdash; ESPERA</th><th style="width:50%">Cliente &mdash; PROCURA</th></tr>
+  <tr>
+    <td><code>net.Listen("tcp", ":8080")</code><br>reserva a porta e fica de pé</td>
+    <td><code>net.Dial("tcp", "host:8080")</code><br>vai até um endereço e conecta</td>
+  </tr>
+  <tr>
+    <td><code>Accept()</code> &mdash; bloqueia até chegar alguém</td>
+    <td>Já sai com a conexão pronta</td>
+  </tr>
+  <tr>
+    <td>Precisa dizer <b>em qual porta</b> atende</td>
+    <td>Precisa dizer <b>em quem</b> quer falar</td>
+  </tr>
+</table>
+
+<h3>Ouvinte e conexão: a confusão clássica</h3>
+
+<div class="diagrama">          ouvinte (porta 8080)          = a PORTARIA do prédio
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+   conexão A   conexão B   conexão C     = as CONVERSAS com cada visitante</div>
+<div class="legenda">Um ouvinte, muitas conexões. Cada <code>Accept()</code> produz uma conversa privada e independente.</div>
+
+<p>O <b>ouvinte</b> não transporta dados. Ele só existe para produzir conexões, uma a cada <code>Accept()</code>. Cada <b>conexão</b> é um cano privado com um cliente específico e não sabe da existência das outras. Entender essa separação resolve metade das dúvidas de quem começa com sockets.</p>
+
+<!-- ================= 6 ================= -->
+<h2 class="nova">6. O servidor, linha por linha</h2>
+
+<div class="arquivo">Aprendizado/01-eco/servidor/main.go</div>
+<pre><code>package main
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+)
+
+func main() {
+	ouvinte, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Println("erro ao abrir a porta:", err)
+		return
+	}
+	defer ouvinte.Close()
+
+	fmt.Println("servidor ouvindo em :8080")
+
+	for {
+		conexao, err := ouvinte.Accept()
+		if err != nil {
+			fmt.Println("erro ao aceitar conexao:", err)
+			continue
+		}
+
+		fmt.Println("cliente conectado:", conexao.RemoteAddr())
+		go atender(conexao)
+	}
+}
+
+func atender(conexao net.Conn) {
+	defer conexao.Close()
+
+	leitor := bufio.NewReader(conexao)
+
+	for {
+		mensagem, err := leitor.ReadString('\n')
+		if err != nil {
+			fmt.Println("cliente desconectou:", conexao.RemoteAddr())
+			return
+		}
+
+		fmt.Printf("recebido de %v: %s", conexao.RemoteAddr(), mensagem)
+		fmt.Fprintf(conexao, "ECO: %s", mensagem)
+	}
+}</code></pre>
+
+<h3>Abrindo a porta</h3>
+
+<pre><code>ouvinte, err := net.Listen("tcp", ":8080")</code></pre>
+<p>A linha mais importante do arquivo. Ela faz três coisas ao mesmo tempo: cria o socket, <b>reserva a porta 8080</b> junto ao sistema operacional, e começa a escutar.</p>
+<ul>
+  <li><code>"tcp"</code> &mdash; o protocolo. Poderia ser <code>"udp"</code>, mas o PBL exige TCP.</li>
+  <li><code>":8080"</code> &mdash; a porta. <b>Repare que não há nada antes dos dois-pontos.</b></li>
+</ul>
+
+<div class="alerta">
+  <span class="rot">Guarde este detalhe para o Docker</span>
+  <p><code>":8080"</code> significa <i>&ldquo;aceite conexões vindas de qualquer endereço de rede desta máquina&rdquo;</i>. Se estivesse escrito <code>"localhost:8080"</code>, o servidor só aceitaria conexões da própria máquina &mdash; e <b>nada funcionaria entre contêineres</b>. É um erro clássico, difícil de diagnosticar, e você vai esbarrar nele na fase de Docker se não lembrar disso.</p>
+</div>
+
+<pre><code>if err != nil {
+	fmt.Println("erro ao abrir a porta:", err)
+	return
+}</code></pre>
+<p>Na prática, esse erro quase sempre significa uma coisa: <b>a porta 8080 já está ocupada</b> &mdash; frequentemente por um servidor seu que ficou rodando esquecido. Aqui a decisão é <code>return</code>: sem porta não há servidor, então encerramos.</p>
+
+<pre><code>defer ouvinte.Close()</code></pre>
+<p>Devolve a porta ao sistema operacional quando <code>main</code> terminar. Escrito uma linha depois da abertura, como manda o costume.</p>
+
+<h3>O laço que aceita clientes</h3>
+
+<pre><code>for {</code></pre>
+<p><code>for</code> sem mais nada é o <b>laço infinito</b>. Go não tem <code>while</code>: o <code>for</code> faz todos os papéis. O servidor precisa de um laço infinito porque ele nunca &ldquo;termina&rdquo; &mdash; fica de pé esperando clientes até você matá-lo.</p>
+
+<pre><code>conexao, err := ouvinte.Accept()</code></pre>
+<p>A segunda linha mais importante. <code>Accept()</code> <b>bloqueia</b>: a execução para ali, <b>sem consumir CPU</b>, até que alguém se conecte. Quando um cliente chega, devolve uma <code>conexao</code> exclusiva com ele. O <code>ouvinte</code> continua livre para receber os próximos.</p>
+
+<pre><code>if err != nil {
+	fmt.Println("erro ao aceitar conexao:", err)
+	continue
+}</code></pre>
+
+<div class="caixa">
+  <span class="rot">Repare na diferença de intenção</span>
+  <p>Aqui usamos <code>continue</code>, e não <code>return</code> como no erro anterior. É uma decisão de projeto, não estilo: <b>um cliente com problema não pode derrubar o servidor inteiro</b>. Ignoramos aquela conexão e voltamos a atender os outros.</p>
+  <p>Este é exatamente o benefício de erro-como-valor da seção 4.2: dois erros, duas respostas diferentes, ambas visíveis no código. Com <code>try/catch</code> as duas situações pareceriam idênticas.</p>
+</div>
+
+<pre><code>fmt.Println("cliente conectado:", conexao.RemoteAddr())</code></pre>
+<p><code>RemoteAddr()</code> é o endereço de quem conectou. Ao testar, aparece algo como <code>[::1]:57600</code> &mdash; o <code>[::1]</code> é o <code>localhost</code> escrito em IPv6, e <code>57600</code> é a porta que o sistema sorteou para o cliente.</p>
+
+<h3>A linha que define o projeto</h3>
+
+<pre><code>go atender(conexao)</code></pre>
+
+<p>Dispara <code>atender</code> como goroutine e volta <b>imediatamente</b> para <code>Accept()</code>, pronto para o próximo cliente.</p>
+
+<p><b>Sem esse <code>go</code>, o servidor atenderia um cliente por vez</b>, e o segundo ficaria na fila até o primeiro desconectar. Com ele, atende todos ao mesmo tempo. Uma palavra de duas letras é a diferença entre um brinquedo e um servidor.</p>
+
+<h3>Atendendo um cliente</h3>
+
+<pre><code>func atender(conexao net.Conn) {
+	defer conexao.Close()</code></pre>
+<p>Cada cliente conectado tem <b>sua própria execução desta função</b>, com sua própria variável <code>conexao</code>, isolada das demais. O <code>defer</code> garante que a conexão será fechada quando essa goroutine acabar, por qualquer motivo &mdash; sem isso o programa acumula conexões mortas até travar.</p>
+
+<pre><code>leitor := bufio.NewReader(conexao)
+
+for {
+	mensagem, err := leitor.ReadString('\n')</code></pre>
+<p><code>ReadString('\n')</code> diz: <b>&ldquo;me devolva bytes até encontrar uma quebra de linha&rdquo;</b>. Ele espera, junta os pedaços que chegarem, e só retorna com a mensagem completa. O porquê disso ser necessário é o assunto da próxima seção.</p>
+<p>Nota de sintaxe: <code>'\n'</code> com <b>aspas simples</b> é um caractere único; <code>"texto"</code> com aspas duplas é uma cadeia. Em Go são <b>tipos diferentes</b>, não uma escolha estética como em Python ou JavaScript.</p>
+<p>E este <code>for</code> interno faz o cliente poder mandar quantas mensagens quiser na mesma conexão, sem reconectar.</p>
+
+<pre><code>if err != nil {
+	fmt.Println("cliente desconectou:", conexao.RemoteAddr())
+	return
+}</code></pre>
+<p>Quando o cliente fecha a conexão, a leitura falha com um erro chamado <b>EOF</b> (fim de arquivo). No mundo dos sockets, <b>desconexão chega como erro de leitura</b> &mdash; é o comportamento normal e esperado, não uma falha.</p>
+<p>O <code>return</code> encerra a função, o <code>defer</code> dispara e fecha a conexão. <b>Só esta goroutine morre</b>; o servidor e os demais clientes seguem intactos.</p>
+
+<pre><code>fmt.Printf("recebido de %v: %s", conexao.RemoteAddr(), mensagem)</code></pre>
+<p><code>Printf</code> é o print formatado &mdash; o <code>%</code> do Python, o <code>String.format</code> do Java. Os marcadores são preenchidos na ordem: <code>%v</code> recebe o endereço, <code>%s</code> recebe a mensagem.</p>
+<p>Detalhe fácil de não notar: <b>não há <code>\n</code> no fim dessa string</b>. Não precisa, porque <code>ReadString</code> <b>inclui o delimitador</b> no resultado &mdash; a quebra de linha já veio grudada na mensagem.</p>
+
+<pre><code>fmt.Fprintf(conexao, "ECO: %s", mensagem)</code></pre>
+<p>E aqui a resposta viaja de volta pela rede. <code>Fprintf</code> é o <code>Printf</code> com um <b>destino</b> no primeiro argumento (o <code>F</code> é de <i>file</i>).</p>
+
+<div class="nota">
+  <span class="rot">A ideia mais elegante do Go</span>
+  <p>Uma conexão de rede, um arquivo em disco e a tela do terminal são <b>a mesma coisa</b> para quem escreve: todos aceitam bytes. Trocar o destino é trocar um argumento &mdash; nada mais.</p>
+  <p>Consequência prática para o Vaijunto: quando você for <b>salvar as caronas em JSON</b>, vai usar exatamente estas mesmas funções, mudando apenas o destino de <code>conexao</code> para um arquivo.</p>
+</div>
+
+<!-- ================= 7 ================= -->
+<h2 class="nova">7. O cliente, linha por linha</h2>
+
+<div class="arquivo">Aprendizado/01-eco/cliente/main.go</div>
+<pre><code>package main
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+)
+
+func main() {
+	conexao, err := net.Dial("tcp", "localhost:8080")
+	if err != nil {
+		fmt.Println("nao consegui conectar:", err)
+		return
+	}
+	defer conexao.Close()
+
+	fmt.Println("conectado. digite uma mensagem e tecle enter (ctrl+c para sair)")
+
+	teclado := bufio.NewReader(os.Stdin)
+	servidor := bufio.NewReader(conexao)
+
+	for {
+		fmt.Print("&gt; ")
+
+		texto, err := teclado.ReadString('\n')
+		if err != nil {
+			return
+		}
+
+		_, err = fmt.Fprint(conexao, texto)
+		if err != nil {
+			fmt.Println("conexao perdida:", err)
+			return
+		}
+
+		resposta, err := servidor.ReadString('\n')
+		if err != nil {
+			fmt.Println("servidor fechou a conexao")
+			return
+		}
+
+		fmt.Print(resposta)
+	}
+}</code></pre>
+
+<h3>Conectando</h3>
+
+<pre><code>conexao, err := net.Dial("tcp", "localhost:8080")</code></pre>
+<p>O oposto de <code>Listen</code>. <b>O servidor espera; o cliente procura.</b> O cliente não abre porta nenhuma &mdash; vai até um endereço e bate na porta.</p>
+<p>Note que aqui o endereço é <b>completo</b>: <code>"localhost:8080"</code>. Faz sentido &mdash; para conectar você precisa dizer <i>em quem</i>; o servidor só precisava dizer <i>em qual porta</i> atende.</p>
+
+<div class="caixa">
+  <span class="rot">A única linha que muda no Docker</span>
+  <p><code>localhost</code> significa &ldquo;esta mesma máquina&rdquo;. Quando cliente e servidor forem para contêineres separados, essa string vira o nome do serviço do servidor &mdash; algo como <code>"servidor:8080"</code>. É praticamente a única alteração necessária no código.</p>
+</div>
+
+<p>O erro aqui quase sempre significa <b>servidor não está rodando</b>, ou endereço errado. Vale testar: rode o cliente sem o servidor e veja a mensagem aparecer.</p>
+
+<h3>Dois leitores, uma ideia bonita</h3>
+
+<pre><code>teclado  := bufio.NewReader(os.Stdin)
+servidor := bufio.NewReader(conexao)</code></pre>
+
+<p><code>os.Stdin</code> é a entrada padrão &mdash; o teclado. E repare: <b>o mesmo <code>bufio.NewReader</code> serve para os dois</b>.</p>
+<p>Para o <code>bufio</code>, teclado e socket de rede são a mesma coisa: uma fonte de bytes. Ler uma linha que você digitou e ler uma linha que atravessou a internet usam <b>código idêntico</b>. É o espelho exato da ideia da caixa da página anterior, agora do lado da leitura.</p>
+<p>Nomear as variáveis <code>teclado</code> e <code>servidor</code> faz o resto do código quase se explicar sozinho: lê do <code>teclado</code>, escreve na <code>conexao</code>, lê do <code>servidor</code>.</p>
+
+<h3>O ciclo de conversa</h3>
+
+<pre><code>fmt.Print("&gt; ")</code></pre>
+<p><code>Print</code>, sem <code>ln</code> e sem <code>f</code>: imprime e <b>não quebra linha</b>. Por isso o cursor fica esperando ao lado do <code>&gt;</code>, como um prompt de verdade.</p>
+
+<pre><code>texto, err := teclado.ReadString('\n')
+if err != nil {
+	return
+}</code></pre>
+<p>Bloqueia até você digitar algo e apertar Enter &mdash; o <code>'\n'</code> aqui é literalmente a tecla Enter. Erro nesse ponto significa fim da entrada: <code>Ctrl+Z</code> e Enter no Windows, <code>Ctrl+D</code> no Linux.</p>
+
+<pre><code>_, err = fmt.Fprint(conexao, texto)</code></pre>
+<p>Manda o texto pela rede. Duas coisas para observar, ambas já vistas na seção 4:</p>
+<ul>
+  <li>O <code>_</code> descarta o número de bytes escritos, que não interessa.</li>
+  <li>É <code>=</code> e não <code>:=</code> porque <code>err</code> <b>já existe</b> desde a linha anterior.</li>
+</ul>
+
+<pre><code>resposta, err := servidor.ReadString('\n')
+if err != nil {
+	fmt.Println("servidor fechou a conexao")
+	return
+}
+
+fmt.Print(resposta)</code></pre>
+<p>Espera a resposta chegar e imprime. <code>Print</code> sem quebra de linha de novo, porque a resposta já traz o <code>\n</code> que veio junto do texto original. E o laço recomeça.</p>
+
+<!-- ================= 8 ================= -->
+<h2 class="nova">8. O problema que o TCP não resolve</h2>
+
+<p>Aqui está o conceito que separa quem &ldquo;fez funcionar&rdquo; de quem <b>entendeu</b>. É também a fonte de bugs mais traiçoeira de programação em rede.</p>
+
+<h3>TCP é uma mangueira, não um carteiro</h3>
+
+<p><b>TCP não tem noção de &ldquo;mensagem&rdquo;.</b> Ele entrega um fluxo contínuo de bytes. Se o cliente enviar <code>"ola\n"</code>, o servidor pode receber:</p>
+
+<div class="diagrama">   ENVIADO                        POSSIBILIDADES DO QUE CHEGA
+
+  "ola\n"          ──────&gt;   1)  "ola\n"              tudo de uma vez
+                             2)  "ol"  +  "a\n"       partido no meio
+                             3)  "o" + "l" + "a\n"    byte a byte
+
+  "ola\n"                    4)  "ola\nmundo\n"       duas grudadas
+  "mundo\n"        ──────&gt;       numa leitura só</div>
+<div class="legenda">Os bytes chegam na ordem certa e sem perda. Onde eles são cortados é imprevisível.</div>
+
+<p>As quatro situações são normais e legítimas. O que corta os dados são o tamanho dos pacotes de rede, o buffer do sistema operacional e o tráfego do momento &mdash; nada que você controle.</p>
+
+<div class="alerta">
+  <span class="rot">O bug que isso causa</span>
+  <p>Se você ler &ldquo;o que vier&rdquo; e tratar cada leitura como uma mensagem, seu programa <b>funciona perfeitamente no seu computador e quebra na apresentação</b>. Localmente as mensagens são pequenas e rápidas, e quase sempre caem no caso 1. Com dois contêineres, rede real e vários clientes, os casos 2 a 4 começam a acontecer &mdash; e aí meia mensagem vira um JSON inválido.</p>
+</div>
+
+<h3>A solução: um protocolo de aplicação</h3>
+
+<p>A saída é <b>combinar uma regra</b> entre cliente e servidor sobre onde uma mensagem termina. Essa combinação tem nome: <b>protocolo de aplicação</b>. Existem três abordagens usuais:</p>
+
+<table>
+  <tr><th style="width:26%">Estratégia</th><th style="width:40%">Como funciona</th><th style="width:34%">Exemplos reais</th></tr>
+  <tr><td><b>Delimitador</b></td><td>Um caractere marca o fim &mdash; no nosso caso, <code>\n</code></td><td>HTTP, SMTP, Redis, <b>e o nosso eco</b></td></tr>
+  <tr><td><b>Tamanho no cabeçalho</b></td><td>Envia primeiro quantos bytes vêm, depois os bytes</td><td>gRPC, WebSocket</td></tr>
+  <tr><td><b>Tamanho fixo</b></td><td>Toda mensagem tem exatamente N bytes</td><td>Protocolos de hardware</td></tr>
+</table>
+
+<p>Escolhemos a primeira, por ser a mais simples de depurar: você consegue ler o tráfego com os próprios olhos.</p>
+
+<h3>É isso que o bufio faz</h3>
+
+<pre><code>leitor := bufio.NewReader(conexao)
+mensagem, err := leitor.ReadString('\n')</code></pre>
+
+<p>O <code>bufio.Reader</code> envolve a conexão e acumula bytes num buffer interno. Aí você lê por <b>critério</b> em vez de ler pedaços brutos: ele guarda o que sobrou, espera o que falta, e devolve só quando a mensagem estiver completa. Os quatro casos do diagrama acima passam a ser tratados corretamente, sem você escrever uma linha para isso.</p>
+
+<div class="nota">
+  <span class="rot">Para o Vaijunto</span>
+  <p>Você vai manter exatamente esta estratégia, trocando o conteúdo da linha por JSON:</p>
+  <pre style="margin-top:2mm;margin-bottom:0"><code>{"acao":"buscar","origem":"Feira de Santana","destino":"Salvador"}
+{"acao":"reservar","trechos":[7,12]}</code></pre>
+  <p style="margin-top:2mm">Uma linha, um comando. Simples de ler, simples de testar, simples de mostrar funcionando na apresentação.</p>
+</div>
+
+<!-- ================= 9 ================= -->
+<h2 class="nova">9. Concorrência: o que temos e o perigo que vem</h2>
+
+<h3>O que já funciona</h3>
+<p>Com <code>go atender(conexao)</code>, cada cliente ganha sua própria linha de execução. O teste com dois clientes simultâneos confirmou: ambos foram atendidos ao mesmo tempo, sem fila.</p>
+
+<div class="diagrama">                    main()
+                      │
+                   Accept()  ─── espera
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+   atender(A)    atender(B)    atender(C)      3 goroutines
+        │             │             │
+     conexão A     conexão B     conexão C     nada compartilhado
+                                                    ↓
+                                              SEGURO hoje</div>
+
+<p>Neste exemplo <b>cada goroutine é uma ilha</b>. Ela só toca na própria conexão e não compartilha nada com ninguém. Por isso não há como dar errado &mdash; ainda.</p>
+
+<h3>O que vai acontecer no Vaijunto</h3>
+
+<div class="diagrama">        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+   atender(A)    atender(B)    atender(C)
+        │             │             │
+        └─────────────┼─────────────┘
+                      ▼
+            ┌───────────────────┐
+            │  CARONAS/ASSENTOS │   estado COMPARTILHADO
+            └───────────────────┘
+                      ↓
+                  PERIGOSO</div>
+
+<p>No momento em que as goroutines passarem a mexer <b>no mesmo dado</b> &mdash; a lista de assentos livres &mdash; nasce a <b>condição de corrida</b>. Ela funciona assim:</p>
+
+<table>
+  <tr><th style="width:14%">Instante</th><th style="width:43%">Goroutine A (passageiro Ana)</th><th style="width:43%">Goroutine B (passageiro Bruno)</th></tr>
+  <tr><td>t1</td><td>lê: <code>assentos = 1</code></td><td>&mdash;</td></tr>
+  <tr><td>t2</td><td>&mdash;</td><td>lê: <code>assentos = 1</code></td></tr>
+  <tr><td>t3</td><td>confere: 1 &gt; 0, pode vender</td><td>confere: 1 &gt; 0, pode vender</td></tr>
+  <tr><td>t4</td><td>escreve: <code>assentos = 0</code></td><td>escreve: <code>assentos = 0</code></td></tr>
+  <tr><td colspan="3"><b>Resultado: duas passagens vendidas para o mesmo assento, e o contador marca 0.</b></td></tr>
+</table>
+
+<p>Nada &ldquo;deu erro&rdquo;. Nenhuma exceção, nenhum log. O programa fez exatamente o que foi mandado, e o resultado está errado. Pior: <b>o bug é intermitente</b> &mdash; depende de as duas leituras caírem no mesmo microssegundo. Você pode testar dez vezes e não ver.</p>
+
+<h3>As duas ferramentas que resolvem</h3>
+
+<h4>sync.Mutex &mdash; a fechadura</h4>
+<pre><code>var trava sync.Mutex
+
+trava.Lock()          // só uma goroutine passa por aqui de cada vez
+if assentos &gt; 0 {
+	assentos--
+}
+trava.Unlock()        // libera a próxima</code></pre>
+<p>&ldquo;Mutex&rdquo; vem de <i>mutual exclusion</i>. É o <code>synchronized</code> do Java e o <code>threading.Lock</code> do Python &mdash; conceito idêntico, então você já tem meio caminho andado. Entre o <code>Lock</code> e o <code>Unlock</code>, <b>uma goroutine por vez</b>; as outras esperam na porta.</p>
+
+<h4>go test -race &mdash; o detector</h4>
+<pre><code>go test -race ./...</code></pre>
+<p>Este é o trunfo de escolher Go para este PBL. O comando roda seus testes <b>vigiando todos os acessos à memória</b>. Se duas goroutines tocarem o mesmo dado sem proteção, ele para e informa: as duas linhas envolvidas, e as duas goroutines culpadas.</p>
+
+<div class="nota">
+  <span class="rot">Por que isso vale nota</span>
+  <p>Nem Python nem Java têm equivalente direto. Você não precisa <i>argumentar</i> que tratou concorrência: roda o comando com o bug e ele acusa; coloca o mutex, roda de novo e ele fica em silêncio. É <b>evidência objetiva</b>, e é o tipo de coisa que se demonstra ao vivo na apresentação.</p>
+</div>
+
+<!-- ================= 10 ================= -->
+<h2 class="nova">10. Como rodar e três experimentos</h2>
+
+<h3>Rodando</h3>
+<p>Abra dois terminais na pasta <code>Aprendizado/01-eco</code>.</p>
+<pre><code>Terminal 1:   go run ./servidor
+Terminal 2:   go run ./cliente</code></pre>
+<p>Digite qualquer coisa no cliente e tecle Enter. A resposta volta com <code>ECO:</code> na frente, e o servidor registra o que recebeu.</p>
+
+<table>
+  <tr><th style="width:30%">Comando</th><th style="width:70%">O que faz</th></tr>
+  <tr><td><code>go run ./servidor</code></td><td>Compila e roda de uma vez, sem gerar arquivo. Ideal para desenvolver.</td></tr>
+  <tr><td><code>go build ./servidor</code></td><td>Gera o executável de verdade. É o que vai para o Docker.</td></tr>
+  <tr><td><code>go vet ./...</code></td><td>Procura erros comuns que compilam mas estão errados.</td></tr>
+  <tr><td><code>gofmt -w .</code></td><td>Formata o código no padrão oficial. Sem debate sobre estilo.</td></tr>
+</table>
+
+<h3>Experimento 1 &mdash; ver a concorrência funcionando</h3>
+<p>Abra <b>três</b> terminais de cliente ao mesmo tempo e converse nos três. Todos são atendidos em paralelo, e o servidor mostra três endereços diferentes conectados.</p>
+
+<h3>Experimento 2 &mdash; ver a concorrência faltando</h3>
+<p>No servidor, <b>apague a palavra <code>go</code></b>, deixando só <code>atender(conexao)</code>. Rode de novo com dois clientes.</p>
+<p>O segundo cliente conecta, mas <b>trava</b>: não recebe resposta nenhuma até o primeiro fechar. Motivo: sem o <code>go</code>, a execução entra em <code>atender</code> e só volta ao <code>Accept()</code> quando aquele cliente sair.</p>
+<p>Ver o programa quebrar por falta de uma palavra de duas letras fixa o conceito melhor do que qualquer explicação. Não esqueça de devolver o <code>go</code> depois.</p>
+
+<h3>Experimento 3 &mdash; ver o EOF</h3>
+<p>Feche um cliente com <code>Ctrl+C</code> e observe o servidor imprimir <code>cliente desconectou</code>. Confirma na prática o que a seção 6 explicou: <b>desconexão chega como erro de leitura</b>, e mata apenas aquela goroutine.</p>
+
+<!-- ================= 11 ================= -->
+<h2 class="nova">11. Cola de tradução</h2>
+
+<p>Para consultar enquanto a sintaxe não fica automática.</p>
+
+<table>
+  <tr><th style="width:26%">Você quer</th><th style="width:25%">Python</th><th style="width:24%">Java</th><th style="width:25%">Go</th></tr>
+  <tr><td>Criar variável</td><td><code>x = 10</code></td><td><code>int x = 10;</code></td><td><code>x := 10</code></td></tr>
+  <tr><td>Imprimir</td><td><code>print(x)</code></td><td><code>System.out.println(x)</code></td><td><code>fmt.Println(x)</code></td></tr>
+  <tr><td>Imprimir formatado</td><td><code>print(f"{a}: {b}")</code></td><td><code>System.out.printf</code></td><td><code>fmt.Printf("%v: %v", a, b)</code></td></tr>
+  <tr><td>Laço infinito</td><td><code>while True:</code></td><td><code>while (true) {</code></td><td><code>for {</code></td></tr>
+  <tr><td>Laço contado</td><td><code>for i in range(10):</code></td><td><code>for (int i=0; i&lt;10; i++)</code></td><td><code>for i := 0; i &lt; 10; i++ {</code></td></tr>
+  <tr><td>Percorrer coleção</td><td><code>for x in lista:</code></td><td><code>for (T x : lista)</code></td><td><code>for _, x := range lista {</code></td></tr>
+  <tr><td>Lista</td><td><code>lista = []</code></td><td><code>ArrayList&lt;T&gt;</code></td><td><code>var lista []T</code> (slice)</td></tr>
+  <tr><td>Dicionário</td><td><code>d = {}</code></td><td><code>HashMap&lt;K,V&gt;</code></td><td><code>m := map[K]V{}</code></td></tr>
+  <tr><td>Objeto de dados</td><td><code>class</code> / <code>dataclass</code></td><td><code>class</code></td><td><code>type X struct {</code></td></tr>
+  <tr><td>Nulo</td><td><code>None</code></td><td><code>null</code></td><td><code>nil</code></td></tr>
+  <tr><td>Tratar falha</td><td><code>try / except</code></td><td><code>try / catch</code></td><td><code>if err != nil {</code></td></tr>
+  <tr><td>Garantir limpeza</td><td><code>with</code> / <code>finally</code></td><td><code>finally</code></td><td><code>defer</code></td></tr>
+  <tr><td>Rodar em paralelo</td><td><code>Thread(...).start()</code></td><td><code>new Thread(...).start()</code></td><td><code>go f()</code></td></tr>
+  <tr><td>Proteger dado</td><td><code>threading.Lock</code></td><td><code>synchronized</code></td><td><code>sync.Mutex</code></td></tr>
+  <tr><td>Ignorar retorno</td><td><code>_, y = f()</code></td><td>&mdash;</td><td><code>_, y := f()</code></td></tr>
+  <tr><td>Servidor TCP</td><td><code>socket.listen()</code></td><td><code>ServerSocket</code></td><td><code>net.Listen("tcp", ...)</code></td></tr>
+  <tr><td>Cliente TCP</td><td><code>socket.connect()</code></td><td><code>new Socket(...)</code></td><td><code>net.Dial("tcp", ...)</code></td></tr>
+  <tr><td>JSON</td><td><code>import json</code></td><td>Jackson / Gson</td><td><code>encoding/json</code></td></tr>
+</table>
+
+<h3>Vocabulário de redes</h3>
+<table>
+  <tr><th style="width:24%">Termo</th><th style="width:76%">Significado</th></tr>
+  <tr><td><b>Socket</b></td><td>A tomada por onde um programa fala com a rede.</td></tr>
+  <tr><td><b>Porta</b></td><td>Número de 1 a 65535 que identifica <i>qual programa</i> na máquina. O IP acha o computador; a porta acha o processo.</td></tr>
+  <tr><td><b>Ouvinte</b></td><td>Socket que só espera conexões. Não transporta dados; produz conexões.</td></tr>
+  <tr><td><b>Conexão</b></td><td>Cano privado entre dois programas. Um por cliente.</td></tr>
+  <tr><td><b>Bloquear</b></td><td>Parar a execução esperando algo, sem gastar CPU. <code>Accept</code> e <code>ReadString</code> bloqueiam.</td></tr>
+  <tr><td><b>EOF</b></td><td><i>End of file</i>. Em socket, significa que o outro lado fechou.</td></tr>
+  <tr><td><b>localhost / ::1</b></td><td>Esta mesma máquina, em IPv4 e em IPv6.</td></tr>
+  <tr><td><b>Goroutine</b></td><td>Linha de execução independente, criada com <code>go</code>. Custa ~2 KB.</td></tr>
+  <tr><td><b>Condição de corrida</b></td><td>Duas execuções mexendo no mesmo dado ao mesmo tempo, com resultado imprevisível.</td></tr>
+  <tr><td><b>Protocolo de aplicação</b></td><td>A regra combinada sobre o formato das mensagens. O nosso: uma linha por mensagem.</td></tr>
+</table>
+
+<!-- ================= 12 ================= -->
+<h2 class="nova">12. Próximos passos rumo ao Vaijunto</h2>
+
+<p>O exemplo de eco já cobre, funcionando, quatro dos cinco requisitos técnicos do enunciado:</p>
+
+<table>
+  <tr><th style="width:44%">Requisito do PBL</th><th style="width:36%">Onde aparece</th><th style="width:20%">Situação</th></tr>
+  <tr><td>Subsistema de rede TCP/IP</td><td><code>net.Listen</code>, <code>net.Dial</code></td><td><b>Feito</b></td></tr>
+  <tr><td>Suporte a API socket básica</td><td><code>Listen</code>, <code>Accept</code>, <code>Dial</code>, ler, escrever</td><td><b>Feito</b></td></tr>
+  <tr><td>Concorrência</td><td><code>go atender(conexao)</code></td><td><b>Feito</b></td></tr>
+  <tr><td>Protocolo de aplicação</td><td>mensagens delimitadas por <code>\n</code></td><td><b>Feito</b></td></tr>
+  <tr><td>Testado por Docker</td><td>&mdash;</td><td>Depois</td></tr>
+  <tr><td>Persistência em JSON</td><td>&mdash;</td><td>Depois</td></tr>
+</table>
+
+<h3>O que falta, em ordem de dificuldade</h3>
+
+<h4>1. Mensagens estruturadas &mdash; <code>encoding/json</code></h4>
+<p>Texto puro não carrega <code>{"acao":"reservar","trechos":[1,2]}</code>. O pacote converte <code>struct</code> em texto e de volta, com duas funções. É a etapa mais fácil da lista.</p>
+
+<h4>2. Estado compartilhado &mdash; <code>sync.Mutex</code></h4>
+<p>Onde as goroutines deixam de ser ilhas e passam a disputar a lista de assentos. <b>É aqui que está a nota do trabalho.</b> Também é onde <code>go test -race</code> deixa de ser curiosidade e vira sua principal ferramenta.</p>
+
+<h4>3. Tempo &mdash; <code>time.AfterFunc</code></h4>
+<p>A reserva que expira em 10 minutos se não for paga. Agenda uma função para rodar no futuro &mdash; e ela roda <b>em sua própria goroutine</b>, o que significa que precisa do mesmo mutex do item anterior. Fácil de esquecer, fácil de errar.</p>
+
+<h4>4. Atomicidade multi-trecho</h4>
+<p>A parte conceitualmente mais difícil: reservar Feira &rarr; Salvador &rarr; Ilhéus ou <b>tudo</b>, ou <b>nada</b>. Se o segundo trecho falhar, o primeiro precisa ser desfeito &mdash; e isso enquanto outros clientes disputam os mesmos assentos.</p>
+
+<h4>5. Persistência em JSON</h4>
+<p>Salvar em arquivo. Cuidado escondido: gravar em disco <b>enquanto</b> goroutines alteram o estado é <i>outro</i> problema de concorrência, não apenas de arquivo.</p>
+
+<h4>6. Docker</h4>
+<p>Empacotar. Aqui o Go brilha: binário estático, imagem final de 10 a 20 MB, sem runtime instalado. E é a hora em que aquele detalhe do <code>":8080"</code> sem <code>localhost</code> decide se funciona ou não.</p>
+
+<div class="caixa">
+  <span class="rot">O recado principal deste guia</span>
+  <p>Você não vai jogar fora nada do que leu aqui. O <code>Listen</code>, o <code>Accept</code>, a goroutine por cliente, o <code>bufio</code> lendo linha a linha, o <code>defer</code> fechando conexão: <b>tudo isso continua igual no projeto final</b>. O que muda é apenas o que acontece <i>dentro</i> da função <code>atender</code>.</p>
+  <p style="margin-bottom:0">O esqueleto está pronto. O resto é preencher.</p>
+</div>
+
+<script>
+(function () {
+  var KW = /\b(package|import|func|var|const|type|struct|interface|map|chan|go|defer|return|if|else|for|range|switch|case|default|break|continue|nil|true|false|string|int|byte|bool|error)\b/;
+  var MASTER = new RegExp(
+    "(//[^\\n]*)" +               // 1 comentario
+    "|(\"(?:[^\"\\\\]|\\\\.)*\")" + // 2 string dupla
+    "|('(?:[^'\\\\]|\\\\.)*')" +   // 3 rune
+    "|" + KW.source +              // 4 palavra-chave
+    "|\\b(\\d+)\\b",               // 5 numero
+    "g"
+  );
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  document.querySelectorAll("pre code").forEach(function (bloco) {
+    var texto = bloco.textContent;
+    bloco.innerHTML = esc(texto).replace(MASTER, function (m, com, str, rune, kw, num) {
+      if (com)  return '<span class="tk-com">' + com + "</span>";
+      if (str)  return '<span class="tk-str">' + str + "</span>";
+      if (rune) return '<span class="tk-str">' + rune + "</span>";
+      if (kw)   return '<span class="tk-kw">' + kw + "</span>";
+      if (num)  return '<span class="tk-num">' + num + "</span>";
+      return m;
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

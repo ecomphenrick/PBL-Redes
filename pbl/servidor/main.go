@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	ouvinte, err := net.Listen("tcp", ":8080")
+	ouvinte, err := net.Listen("tcp", "localhost:8080")
 	if err != nil {
 		fmt.Println("erro ao abrir a porta:", err)
 		return

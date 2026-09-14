@@ -37,6 +37,7 @@ type Pedido struct {
 	Acao    string `json:"acao"`
 	Usuario string `json:"usuario,omitempty"`
 	Senha   string `json:"senha,omitempty"`
+	Tipo    string `json:"tipo,omitempty"` // registrar: motorista ou passageiro
 
 	// cadastrar
 	Rota     []string `json:"rota,omitempty"`

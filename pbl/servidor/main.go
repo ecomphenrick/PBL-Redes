@@ -28,7 +28,7 @@ type sessao struct {
 
 func main() {
 	varredura := configurarTempos()
-	banco := dados.NovoBanco()
+	banco := dados.Carregar(arquivoDeDados())
 
 	fmt.Printf("reserva expira em %s, varrendo a cada %s\n",
 		dados.TempoDeReserva, varredura)
@@ -70,6 +70,15 @@ func expirarPeriodicamente(banco *dados.Banco, intervalo time.Duration) {
 			fmt.Printf("expirei %d reserva(s) nao paga(s)\n", n)
 		}
 	}
+}
+
+// arquivoDeDados diz onde o banco JSON fica gravado.
+// No Docker apontamos para um volume, para os dados sobreviverem ao container.
+func arquivoDeDados() string {
+	if v := os.Getenv("VAIJUNTO_DADOS"); v != "" {
+		return v
+	}
+	return "vaijunto.json"
 }
 
 // configurarTempos le as variaveis de ambiente que encurtam os prazos.
@@ -143,6 +152,15 @@ func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Respo
 	switch p.Acao {
 	case "ping":
 		return protocolo.Resposta{OK: true, Mensagem: "pong"}
+
+	case "registrar":
+		if err := banco.CadastrarUsuario(p.Usuario, p.Senha, p.Tipo); err != nil {
+			return erro(err.Error())
+		}
+		return protocolo.Resposta{
+			OK:       true,
+			Mensagem: fmt.Sprintf("conta criada para %s (%s)", p.Usuario, p.Tipo),
+		}
 
 	case "login":
 		u, ok := banco.Autenticar(p.Usuario, p.Senha)
@@ -221,7 +239,8 @@ func erro(mensagem string) protocolo.Resposta {
 }
 
 // exigeLogin diz quais acoes precisam de usuario autenticado.
-// So "ping" e "login" ficam de fora; todo o resto exige.
+// So "ping", "login" e "registrar" ficam de fora -- quem esta criando conta
+// ainda nao tem como estar logado. Todo o resto exige.
 func exigeLogin(acao string) bool {
-	return acao != "ping" && acao != "login"
+	return acao != "ping" && acao != "login" && acao != "registrar"
 }

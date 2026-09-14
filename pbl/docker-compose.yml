@@ -1,0 +1,36 @@
+# Sobe o servidor e deixa o cliente pronto para conectar.
+#
+#   docker compose up -d --build     sobe o servidor
+#   docker compose run --rm cliente  abre um cliente (pode repetir em varios
+#                                    terminais, para demonstrar concorrencia)
+#   docker compose down              derruba tudo
+
+services:
+  servidor:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Prazos curtos para a demonstracao. Em uso normal, apague as duas
+      # linhas abaixo e o prazo volta a ser os 10 minutos do enunciado.
+      VAIJUNTO_RESERVA: 30s
+      VAIJUNTO_VARREDURA: 5s
+    volumes:
+      - dados:/dados
+
+  cliente:
+    build: .
+    command: /bin/cliente
+    environment:
+      # "servidor" e o nome do servico acima: o Docker resolve para o IP do
+      # container. E por isso que o servidor precisa ouvir em ":8080" e nao
+      # em "localhost:8080" -- senao ele recusaria conexao de fora.
+      VAIJUNTO_SERVIDOR: servidor:8080
+    depends_on:
+      - servidor
+    # Sem estes dois o menu nao consegue ler o teclado.
+    stdin_open: true
+    tty: true
+
+volumes:
+  dados:

@@ -34,7 +34,7 @@ func main() {
 		teclado:  bufio.NewReader(os.Stdin),
 	}
 
-	tipo, ok := c.login()
+	tipo, ok := c.entrada()
 	if !ok {
 		return
 	}
@@ -61,34 +61,114 @@ func endereco() string {
 // Login
 // ---------------------------------------------------------------------------
 
-// login insiste ate o servidor aceitar. Devolve o tipo do usuario.
-func (c *cliente) login() (string, bool) {
+// entrada e a primeira tela: entrar com uma conta existente ou criar uma nova.
+// Devolve o tipo do usuario, que decide qual menu aparece depois.
+func (c *cliente) entrada() (string, bool) {
 	fmt.Println("=== Vaijunto ===")
 
 	for {
-		usuario, ok := c.ler("usuario: ")
-		if !ok {
+		fmt.Println("\n1) entrar   2) criar conta   0) sair")
+
+		switch c.opcao() {
+		case "1":
+			if tipo, ok := c.entrar(); ok {
+				return tipo, true
+			}
+		case "2":
+			if tipo, ok := c.criarConta(); ok {
+				return tipo, true
+			}
+		case "0", "":
 			return "", false
+		default:
+			fmt.Println("  opcao invalida")
 		}
-
-		senha, ok := c.ler("senha: ")
-		if !ok {
-			return "", false
-		}
-
-		r, err := c.pedir(protocolo.Pedido{Acao: "login", Usuario: usuario, Senha: senha})
-		if err != nil {
-			fmt.Println("conexao perdida:", err)
-			return "", false
-		}
-
-		if r.OK {
-			fmt.Println(r.Mensagem)
-			return r.Tipo, true
-		}
-
-		fmt.Println("  erro:", r.Erro)
 	}
+}
+
+// entrar pede usuario e senha de uma conta que ja existe.
+func (c *cliente) entrar() (string, bool) {
+	usuario, ok := c.ler("usuario: ")
+	if !ok {
+		return "", false
+	}
+
+	senha, ok := c.ler("senha: ")
+	if !ok {
+		return "", false
+	}
+
+	return c.autenticar(usuario, senha)
+}
+
+// criarConta registra um usuario novo e ja entra com ele.
+func (c *cliente) criarConta() (string, bool) {
+	usuario, ok := c.ler("novo usuario: ")
+	if !ok {
+		return "", false
+	}
+
+	senha, ok := c.ler("senha: ")
+	if !ok {
+		return "", false
+	}
+
+	fmt.Println("  1) motorista (oferece caronas)")
+	fmt.Println("  2) passageiro (procura caronas)")
+
+	escolha, ok := c.ler("tipo: ")
+	if !ok {
+		return "", false
+	}
+
+	var tipo string
+	switch escolha {
+	case "1":
+		tipo = "motorista"
+	case "2":
+		tipo = "passageiro"
+	default:
+		fmt.Println("  escolha 1 ou 2")
+		return "", false
+	}
+
+	r, err := c.pedir(protocolo.Pedido{
+		Acao:    "registrar",
+		Usuario: usuario,
+		Senha:   senha,
+		Tipo:    tipo,
+	})
+	if err != nil {
+		fmt.Println("conexao perdida:", err)
+		return "", false
+	}
+
+	if !r.OK {
+		fmt.Println("  erro:", r.Erro)
+		return "", false
+	}
+
+	fmt.Println(" ", r.Mensagem)
+
+	// Conta criada: entra direto, sem obrigar a digitar tudo de novo.
+	return c.autenticar(usuario, senha)
+}
+
+// autenticar manda o login e devolve o tipo do usuario.
+func (c *cliente) autenticar(usuario, senha string) (string, bool) {
+	r, err := c.pedir(protocolo.Pedido{Acao: "login", Usuario: usuario, Senha: senha})
+	if err != nil {
+		fmt.Println("conexao perdida:", err)
+		return "", false
+	}
+
+	if !r.OK {
+		fmt.Println("  erro:", r.Erro)
+		return "", false
+	}
+
+	fmt.Println(" ", r.Mensagem)
+	return r.Tipo, true
 }
 
 // ---------------------------------------------------------------------------

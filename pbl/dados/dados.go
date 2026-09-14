@@ -7,8 +7,10 @@
 package dados
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -59,15 +61,21 @@ type Reserva struct {
 // O mutex protege tudo que esta declarado abaixo dele. Como varias goroutines
 // (uma por cliente conectado) mexem neste mesmo Banco, sem o mutex duas
 // compras simultaneas poderiam ler o mesmo assento livre e vende-lo duas vezes.
+//
+// "mu" e "arquivo" comecam com minuscula, entao o encoding/json os ignora --
+// e o que queremos: nem a fechadura nem o caminho do arquivo fazem parte dos
+// dados salvos.
 type Banco struct {
-	mu       sync.Mutex
+	mu      sync.Mutex
+	arquivo string
+
 	Usuarios map[string]Usuario `json:"usuarios"`
 	Caronas  []Carona           `json:"caronas"`
 	Reservas []Reserva          `json:"reservas"`
 	ProxID   int                `json:"prox_id"`
 }
 
-// NovoBanco cria o banco ja com usuarios de teste.
+// NovoBanco cria o banco ja com usuarios de teste, sem persistencia.
 //
 // Devolve PONTEIRO (*Banco), nunca valor. Um sync.Mutex nao pode ser copiado:
 // cada copia teria a sua propria fechadura, e proteger uma copia nao protegeria
@@ -82,6 +90,37 @@ func NovoBanco() *Banco {
 		},
 		ProxID: 1,
 	}
+}
+
+// Carregar le o banco de um arquivo JSON. Se o arquivo nao existir (primeira
+// execucao), comeca do zero. A partir daqui toda alteracao e gravada sozinha.
+//
+// O enunciado proibe SGBD mas permite JSON: e exatamente isto.
+func Carregar(caminho string) *Banco {
+	b := NovoBanco()
+	b.arquivo = caminho
+
+	conteudo, err := os.ReadFile(caminho)
+	if err != nil {
+		fmt.Printf("sem dados anteriores em %s, comecando do zero\n", caminho)
+		return b
+	}
+
+	if err := json.Unmarshal(conteudo, b); err != nil {
+		fmt.Printf("arquivo %s ilegivel (%v), comecando do zero\n", caminho, err)
+		return NovoBancoEm(caminho)
+	}
+
+	fmt.Printf("dados carregados de %s: %d carona(s), %d reserva(s)\n",
+		caminho, len(b.Caronas), len(b.Reservas))
+	return b
+}
+
+// NovoBancoEm cria um banco vazio que grava no caminho indicado.
+func NovoBancoEm(caminho string) *Banco {
+	b := NovoBanco()
+	b.arquivo = caminho
+	return b
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +142,39 @@ func (b *Banco) Autenticar(login, senha string) (Usuario, bool) {
 	}
 
 	return u, true
+}
+
+// CadastrarUsuario cria uma conta nova.
+//
+// Repare que a checagem "ja existe" e a escrita no mapa acontecem DENTRO do
+// mesmo Lock. Se a checagem ficasse fora, duas pessoas registrando o mesmo
+// login ao mesmo tempo passariam as duas pela verificacao antes de qualquer
+// uma escrever -- e a segunda sobrescreveria a primeira. E o mesmo raciocinio
+// das duas fases do Reservar.
+func (b *Banco) CadastrarUsuario(login, senha, tipo string) error {
+	login = strings.TrimSpace(login)
+
+	if login == "" {
+		return errors.New("informe o usuario")
+	}
+	if senha == "" {
+		return errors.New("informe a senha")
+	}
+	if tipo != "motorista" && tipo != "passageiro" {
+		return errors.New(`o tipo precisa ser "motorista" ou "passageiro"`)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, existe := b.Usuarios[login]; existe {
+		return fmt.Errorf("o usuario %q ja existe", login)
+	}
+
+	b.Usuarios[login] = Usuario{Login: login, Senha: senha, Tipo: tipo}
+	b.persistir()
+
+	return nil
 }
 
 // CadastrarCarona registra uma carona nova e devolve o ID dela.
@@ -134,46 +206,19 @@ func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, as
 
 	b.ProxID++
 	b.Caronas = append(b.Caronas, c)
+	b.persistir()
 
 	return c.ID, nil
 }
 
 // Buscar devolve as opcoes de viagem de origem ate destino naquela data.
-// Por enquanto so caronas diretas; conexoes entram na fase 11.
+// Primeiro as caronas diretas, depois as que exigem UMA baldeacao.
 func (b *Banco) Buscar(origem, destino, data string) []protocolo.Opcao {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	var opcoes []protocolo.Opcao
-
-	for _, c := range b.Caronas {
-		if c.Data != data {
-			continue
-		}
-
-		de := c.indice(origem)
-		ate := c.indice(destino)
-
-		// As duas cidades precisam estar na rota, e a origem precisa vir
-		// ANTES do destino: a carona so anda em um sentido.
-		if de == -1 || ate == -1 || de >= ate {
-			continue
-		}
-
-		livres := c.livres(de, ate)
-		if livres < 1 {
-			continue
-		}
-
-		opcoes = append(opcoes, protocolo.Opcao{
-			Itens: []protocolo.Item{{CaronaID: c.ID, De: de, Ate: ate}},
-			Preco: c.Preco * (ate - de),
-			Resumo: fmt.Sprintf("carona %d (%s) %s | %d livre(s)",
-				c.ID, c.Motorista, strings.Join(c.Rota[de:ate+1], " -> "), livres),
-		})
-	}
-
-	return opcoes
+	opcoes := b.buscarDiretas(origem, destino, data)
+	return append(opcoes, b.buscarComConexao(origem, destino, data)...)
 }
 
 // Reservar segura assentos em uma ou mais caronas, de forma ATOMICA.
@@ -224,6 +269,7 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 
 	b.ProxID++
 	b.Reservas = append(b.Reservas, r)
+	b.persistir()
 
 	return r.ID, nil
 }
@@ -249,6 +295,8 @@ func (b *Banco) Pagar(passageiro string, reservaID int) error {
 	}
 
 	r.Estado = "paga"
+	b.persistir()
+
 	return nil
 }
 
@@ -281,6 +329,10 @@ func (b *Banco) ExpirarVencidas() int {
 		expiradas++
 	}
 
+	if expiradas > 0 {
+		b.persistir()
+	}
+
 	return expiradas
 }
 
@@ -295,9 +347,8 @@ func (b *Banco) MinhasCaronas(motorista string) []string {
 		if c.Motorista != motorista {
 			continue
 		}
-		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | %s | ocupados por trecho: %v de %d",
-			c.ID, c.Data, strings.Join(c.Rota, " -> "),
-			fmt.Sprintf("R$%d/trecho", c.Preco), c.Ocupados, c.Assentos))
+		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | ocupados por trecho: %v de %d",
+			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Ocupados, c.Assentos))
 	}
 
 	return linhas
@@ -331,6 +382,122 @@ func (b *Banco) MinhasReservas(passageiro string) []string {
 // Funcoes internas: NENHUMA trava. Sao chamadas de dentro das publicas,
 // que ja estao segurando o mutex.
 // ---------------------------------------------------------------------------
+
+// buscarDiretas acha caronas que sozinhas levam de origem ate destino.
+func (b *Banco) buscarDiretas(origem, destino, data string) []protocolo.Opcao {
+	var opcoes []protocolo.Opcao
+
+	for _, c := range b.Caronas {
+		if c.Data != data {
+			continue
+		}
+
+		de := c.indice(origem)
+		ate := c.indice(destino)
+
+		// As duas cidades precisam estar na rota, e a origem precisa vir
+		// ANTES do destino: a carona so anda em um sentido.
+		if de == -1 || ate == -1 || de >= ate {
+			continue
+		}
+
+		livres := c.livres(de, ate)
+		if livres < 1 {
+			continue
+		}
+
+		opcoes = append(opcoes, protocolo.Opcao{
+			Itens: []protocolo.Item{{CaronaID: c.ID, De: de, Ate: ate}},
+			Preco: c.Preco * (ate - de),
+			Resumo: fmt.Sprintf("direto: carona %d (%s) %s | %d livre(s)",
+				c.ID, c.Motorista, strings.Join(c.Rota[de:ate+1], " -> "), livres),
+		})
+	}
+
+	return opcoes
+}
+
+// buscarComConexao acha pares de caronas que, juntas, levam de origem ate
+// destino trocando de veiculo numa cidade do meio.
+//
+// E aqui que a atomicidade do Reservar ganha sentido: uma opcao destas tem
+// DOIS itens, e nao adianta conseguir o primeiro e perder o segundo.
+func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao {
+	var opcoes []protocolo.Opcao
+
+	for _, primeira := range b.Caronas {
+		if primeira.Data != data {
+			continue
+		}
+
+		de := primeira.indice(origem)
+		if de == -1 {
+			continue
+		}
+
+		// Testa cada cidade depois da origem como ponto de baldeacao.
+		for meio := de + 1; meio < len(primeira.Rota); meio++ {
+			baldeacao := primeira.Rota[meio]
+
+			// Se a primeira carona ja chega no destino, isso e viagem direta:
+			// a outra funcao ja cuidou disso.
+			if baldeacao == destino {
+				continue
+			}
+			if primeira.livres(de, meio) < 1 {
+				continue
+			}
+
+			for _, segunda := range b.Caronas {
+				if segunda.ID == primeira.ID || segunda.Data != data {
+					continue
+				}
+
+				de2 := segunda.indice(baldeacao)
+				ate2 := segunda.indice(destino)
+				if de2 == -1 || ate2 == -1 || de2 >= ate2 {
+					continue
+				}
+				if segunda.livres(de2, ate2) < 1 {
+					continue
+				}
+
+				opcoes = append(opcoes, protocolo.Opcao{
+					Itens: []protocolo.Item{
+						{CaronaID: primeira.ID, De: de, Ate: meio},
+						{CaronaID: segunda.ID, De: de2, Ate: ate2},
+					},
+					Preco: primeira.Preco*(meio-de) + segunda.Preco*(ate2-de2),
+					Resumo: fmt.Sprintf("conexao em %s: carona %d (%s) + carona %d (%s)",
+						baldeacao, primeira.ID, primeira.Motorista, segunda.ID, segunda.Motorista),
+				})
+			}
+		}
+	}
+
+	return opcoes
+}
+
+// persistir grava o banco no arquivo. Se nao houver arquivo configurado
+// (como nos testes), nao faz nada.
+//
+// Nao trava: quem chama ja esta com o mutex na mao. Gravar aqui dentro
+// garante que o arquivo nunca pega o estado pela metade.
+func (b *Banco) persistir() {
+	if b.arquivo == "" {
+		return
+	}
+
+	conteudo, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		fmt.Println("erro ao converter os dados:", err)
+		return
+	}
+
+	if err := os.WriteFile(b.arquivo, conteudo, 0o644); err != nil {
+		fmt.Println("erro ao gravar", b.arquivo, ":", err)
+	}
+}
 
 // acharCarona devolve um PONTEIRO para a carona dentro do slice.
 //

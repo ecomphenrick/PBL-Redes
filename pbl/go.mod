@@ -1,3 +1,3 @@
-module vaijunto/aprendizado/eco
+module vaijunto
 
 go 1.27

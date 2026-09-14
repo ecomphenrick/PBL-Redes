@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
+
+	"vaijunto/protocolo"
 )
 
 func main() {
@@ -15,31 +18,43 @@ func main() {
 	}
 	defer conexao.Close()
 
-	fmt.Println("conectado. digite uma mensagem e tecle enter (ctrl+c para sair)")
+	fmt.Println("conectado. digite uma acao (tente: ping) ou ctrl+c para sair")
 
 	teclado := bufio.NewReader(os.Stdin)
 	servidor := bufio.NewReader(conexao)
 
 	for {
-		fmt.Print("> ")
+		fmt.Print("acao> ")
 
 		texto, err := teclado.ReadString('\n')
 		if err != nil {
 			return
 		}
 
-		_, err = fmt.Fprint(conexao, texto)
-		if err != nil {
+		// TrimSpace tira o \r\n do Enter. Sem isso a acao viraria "ping\r\n"
+		// e nunca casaria com o case "ping" do servidor.
+		acao := strings.TrimSpace(texto)
+		if acao == "" {
+			continue
+		}
+
+		pedido := protocolo.Pedido{Acao: acao}
+
+		if err := protocolo.EnviarPedido(conexao, pedido); err != nil {
 			fmt.Println("conexao perdida:", err)
 			return
 		}
 
-		resposta, err := servidor.ReadString('\n')
+		resposta, err := protocolo.LerResposta(servidor)
 		if err != nil {
 			fmt.Println("servidor fechou a conexao")
 			return
 		}
 
-		fmt.Print(resposta)
+		if resposta.OK {
+			fmt.Println("  ok:", resposta.Mensagem)
+		} else {
+			fmt.Println("  erro:", resposta.Erro)
+		}
 	}
 }

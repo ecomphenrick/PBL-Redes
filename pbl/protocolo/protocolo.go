@@ -12,12 +12,47 @@ import (
 	"io"
 )
 
+// Item e um pedaco de viagem: "na carona X, da cidade De ate a cidade Ate".
+// De e Ate sao INDICES dentro da Rota da carona, nao nomes de cidade.
+type Item struct {
+	CaronaID int `json:"carona_id"`
+	De       int `json:"de"`
+	Ate      int `json:"ate"`
+}
+
+// Opcao e uma viagem possivel que o servidor oferece ao passageiro.
+//
+// O servidor ja monta o Resumo pronto para exibir. Assim o cliente nao precisa
+// conhecer a estrutura interna das caronas: ele so imprime o texto e devolve
+// os Itens da opcao escolhida.
+type Opcao struct {
+	Itens  []Item `json:"itens"`
+	Resumo string `json:"resumo"`
+	Preco  int    `json:"preco"`
+}
+
 // Pedido e o que o cliente manda para o servidor.
-// Por enquanto so tem os campos de login; os outros chegam nas proximas fases.
+// Cada acao usa so os campos que interessam a ela; o resto vai vazio.
 type Pedido struct {
 	Acao    string `json:"acao"`
 	Usuario string `json:"usuario,omitempty"`
 	Senha   string `json:"senha,omitempty"`
+
+	// cadastrar
+	Rota     []string `json:"rota,omitempty"`
+	Data     string   `json:"data,omitempty"`
+	Assentos int      `json:"assentos,omitempty"`
+	Preco    int      `json:"preco,omitempty"`
+
+	// buscar
+	Origem  string `json:"origem,omitempty"`
+	Destino string `json:"destino,omitempty"`
+
+	// reservar
+	Itens []Item `json:"itens,omitempty"`
+
+	// pagar
+	ReservaID int `json:"reserva_id,omitempty"`
 }
 
 // Resposta e o que o servidor devolve para o cliente.
@@ -25,6 +60,11 @@ type Resposta struct {
 	OK       bool   `json:"ok"`
 	Erro     string `json:"erro,omitempty"`
 	Mensagem string `json:"mensagem,omitempty"`
+
+	Tipo      string   `json:"tipo,omitempty"`       // login
+	Opcoes    []Opcao  `json:"opcoes,omitempty"`     // buscar
+	Linhas    []string `json:"linhas,omitempty"`     // listagens
+	ReservaID int      `json:"reserva_id,omitempty"` // reservar
 }
 
 // LerPedido le uma linha e transforma o JSON em Pedido.

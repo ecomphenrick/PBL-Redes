@@ -177,13 +177,17 @@ func (c *cliente) autenticar(usuario, senha string) (string, bool) {
 
 func (c *cliente) menuMotorista() {
 	for {
-		fmt.Println("\n1) cadastrar carona   2) minhas caronas   0) sair")
+		fmt.Println("\n1) cadastrar carona   2) minhas caronas   3) passageiros   4) cancelar carona   0) sair")
 
 		switch c.opcao() {
 		case "1":
 			c.cadastrarCarona()
 		case "2":
-			c.listar("minhas_caronas", "voce ainda nao tem caronas")
+			c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas")
+		case "3":
+			c.passageiros()
+		case "4":
+			c.cancelarCarona()
 		case "0", "":
 			return
 		default:
@@ -231,21 +235,50 @@ func (c *cliente) cadastrarCarona() {
 	}))
 }
 
+// passageiros mostra quem esta em cada trecho de uma carona.
+func (c *cliente) passageiros() {
+	id, ok := c.lerNumero("numero da carona: ")
+	if !ok {
+		return
+	}
+
+	c.listar(protocolo.Pedido{Acao: "passageiros", CaronaID: id}, "carona sem dados")
+}
+
+// cancelarCarona pede confirmacao antes, porque desfaz as reservas de todos
+// os passageiros daquela carona.
+func (c *cliente) cancelarCarona() {
+	id, ok := c.lerNumero("numero da carona: ")
+	if !ok {
+		return
+	}
+
+	resposta, ok := c.ler(fmt.Sprintf("cancelar a carona %d? as reservas dos passageiros serao desfeitas (s/n): ", id))
+	if !ok || strings.ToLower(resposta) != "s" {
+		fmt.Println("  nada foi cancelado")
+		return
+	}
+
+	c.mostrar(c.pedir(protocolo.Pedido{Acao: "cancelar_carona", CaronaID: id}))
+}
+
 // ---------------------------------------------------------------------------
 // Menu do passageiro
 // ---------------------------------------------------------------------------
 
 func (c *cliente) menuPassageiro() {
 	for {
-		fmt.Println("\n1) buscar e reservar   2) minhas reservas   3) pagar   0) sair")
+		fmt.Println("\n1) buscar e reservar   2) minhas reservas   3) pagar   4) cancelar reserva   0) sair")
 
 		switch c.opcao() {
 		case "1":
 			c.buscarEReservar()
 		case "2":
-			c.listar("minhas_reservas", "voce ainda nao tem reservas")
+			c.listar(protocolo.Pedido{Acao: "minhas_reservas"}, "voce ainda nao tem reservas")
 		case "3":
 			c.pagar()
+		case "4":
+			c.cancelarReserva()
 		case "0", "":
 			return
 		default:
@@ -321,6 +354,15 @@ func (c *cliente) pagar() {
 	c.mostrar(c.pedir(protocolo.Pedido{Acao: "pagar", ReservaID: id}))
 }
 
+func (c *cliente) cancelarReserva() {
+	id, ok := c.lerNumero("numero da reserva: ")
+	if !ok {
+		return
+	}
+
+	c.mostrar(c.pedir(protocolo.Pedido{Acao: "cancelar_reserva", ReservaID: id}))
+}
+
 // ---------------------------------------------------------------------------
 // Peças reaproveitadas
 // ---------------------------------------------------------------------------
@@ -335,8 +377,8 @@ func (c *cliente) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
 }
 
 // listar faz um pedido que devolve Linhas e imprime uma por uma.
-func (c *cliente) listar(acao, sePvazio string) {
-	r, err := c.pedir(protocolo.Pedido{Acao: acao})
+func (c *cliente) listar(p protocolo.Pedido, seVazio string) {
+	r, err := c.pedir(p)
 	if err != nil {
 		fmt.Println("conexao perdida:", err)
 		return
@@ -348,7 +390,7 @@ func (c *cliente) listar(acao, sePvazio string) {
 	}
 
 	if len(r.Linhas) == 0 {
-		fmt.Println(" ", sePvazio)
+		fmt.Println(" ", seVazio)
 		return
 	}
 

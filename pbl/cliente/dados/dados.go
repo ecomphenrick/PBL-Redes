@@ -45,6 +45,7 @@ type Carona struct {
 	Assentos  int      `json:"assentos"` // total de assentos, igual em todo trecho
 	Preco     int      `json:"preco"`    // preco POR TRECHO
 	Ocupados  []int    `json:"ocupados"` // len = len(Rota)-1
+	Cancelada bool     `json:"cancelada,omitempty"`
 }
 
 // Reserva e um pedido de assentos, que pode cobrir varias caronas.
@@ -52,7 +53,8 @@ type Reserva struct {
 	ID         int              `json:"id"`
 	Passageiro string           `json:"passageiro"`
 	Itens      []protocolo.Item `json:"itens"`
-	Estado     string           `json:"estado"` // "pendente" | "paga" | "expirada"
+	Estado     string           `json:"estado"` // "pendente" | "paga" | "expirada" | "cancelada"
+	Motivo     string           `json:"motivo,omitempty"`
 	Expira     time.Time        `json:"expira"`
 }
 
@@ -246,6 +248,9 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 		if c == nil {
 			return 0, fmt.Errorf("carona %d nao existe", item.CaronaID)
 		}
+		if c.Cancelada {
+			return 0, fmt.Errorf("carona %d foi cancelada", item.CaronaID)
+		}
 		if item.De < 0 || item.Ate > c.trechos() || item.De >= item.Ate {
 			return 0, fmt.Errorf("trecho invalido na carona %d", item.CaronaID)
 		}
@@ -292,12 +297,81 @@ func (b *Banco) Pagar(passageiro string, reservaID int) error {
 		return errors.New("esta reserva ja foi paga")
 	case "expirada":
 		return errors.New("esta reserva expirou; os assentos voltaram para a fila")
+	case "cancelada":
+		return fmt.Errorf("esta reserva foi cancelada (%s)", r.Motivo)
 	}
 
 	r.Estado = "paga"
 	b.persistir()
 
 	return nil
+}
+
+// CancelarReserva desiste de uma reserva pendente ou paga e devolve os
+// assentos de TODOS os trechos dela.
+//
+// E o espelho do Reservar: se a reserva cobre duas caronas, as duas recebem o
+// assento de volta juntas, dentro do mesmo Lock.
+func (b *Banco) CancelarReserva(passageiro string, reservaID int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	r := b.acharReserva(reservaID)
+	if r == nil {
+		return fmt.Errorf("reserva %d nao existe", reservaID)
+	}
+	if r.Passageiro != passageiro {
+		return errors.New("esta reserva nao e sua")
+	}
+	if !r.ativa() {
+		return fmt.Errorf("esta reserva ja esta %s", r.Estado)
+	}
+
+	b.cancelar(r, "cancelada pelo passageiro")
+	b.persistir()
+
+	return nil
+}
+
+// CancelarCarona tira uma carona do ar e cancela todas as reservas ativas que
+// passam por ela. Devolve quantas reservas foram afetadas.
+//
+// Atencao ao caso da conexao: uma reserva Feira->Ilheus pode usar esta carona
+// num trecho e OUTRA carona no trecho seguinte. Liberar so a parte desta
+// carona deixaria o passageiro com meia viagem -- exatamente o que a
+// atomicidade proibe. Por isso a reserva inteira e cancelada, e os assentos
+// voltam em TODAS as caronas dela.
+func (b *Banco) CancelarCarona(motorista string, caronaID int) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	c := b.acharCarona(caronaID)
+	if c == nil {
+		return 0, fmt.Errorf("carona %d nao existe", caronaID)
+	}
+	if c.Motorista != motorista {
+		return 0, errors.New("esta carona nao e sua")
+	}
+	if c.Cancelada {
+		return 0, errors.New("esta carona ja foi cancelada")
+	}
+
+	c.Cancelada = true
+
+	motivo := fmt.Sprintf("carona %d cancelada pelo motorista", caronaID)
+	afetadas := 0
+
+	for i := range b.Reservas {
+		r := &b.Reservas[i]
+		if r.ativa() && r.usa(caronaID) {
+			b.cancelar(r, motivo)
+			afetadas++
+		}
+	}
+
+	b.persistir()
+
+	return afetadas, nil
 }
 
 // ExpirarVencidas devolve os assentos das reservas pendentes que passaram do
@@ -319,12 +393,7 @@ func (b *Banco) ExpirarVencidas() int {
 			continue
 		}
 
-		for _, item := range r.Itens {
-			if c := b.acharCarona(item.CaronaID); c != nil {
-				c.liberar(item.De, item.Ate)
-			}
-		}
-
+		b.devolverAssentos(r)
 		r.Estado = "expirada"
 		expiradas++
 	}
@@ -347,11 +416,66 @@ func (b *Banco) MinhasCaronas(motorista string) []string {
 		if c.Motorista != motorista {
 			continue
 		}
-		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | ocupados por trecho: %v de %d",
-			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Ocupados, c.Assentos))
+
+		situacao := ""
+		if c.Cancelada {
+			situacao = " | CANCELADA"
+		}
+
+		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | ocupados por trecho: %v de %d%s",
+			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Ocupados, c.Assentos, situacao))
 	}
 
 	return linhas
+}
+
+// PassageirosDaCarona mostra, trecho a trecho, quem esta em cada assento.
+// So o motorista dono da carona pode ver.
+func (b *Banco) PassageirosDaCarona(motorista string, caronaID int) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	c := b.acharCarona(caronaID)
+	if c == nil {
+		return nil, fmt.Errorf("carona %d nao existe", caronaID)
+	}
+	if c.Motorista != motorista {
+		return nil, errors.New("esta carona nao e sua")
+	}
+
+	situacao := ""
+	if c.Cancelada {
+		situacao = " | CANCELADA"
+	}
+
+	linhas := []string{fmt.Sprintf("carona %d | %s | %s%s",
+		c.ID, c.Data, strings.Join(c.Rota, " -> "), situacao)}
+
+	// Para cada trecho, procura as reservas ativas cujo caminho passa por ele.
+	for t := 0; t < c.trechos(); t++ {
+		var nomes []string
+
+		for _, r := range b.Reservas {
+			if !r.ativa() {
+				continue
+			}
+			for _, item := range r.Itens {
+				if item.CaronaID == caronaID && item.De <= t && t < item.Ate {
+					nomes = append(nomes, fmt.Sprintf("%s (%s)", r.Passageiro, r.Estado))
+				}
+			}
+		}
+
+		lista := "ninguem"
+		if len(nomes) > 0 {
+			lista = strings.Join(nomes, ", ")
+		}
+
+		linhas = append(linhas, fmt.Sprintf("  %s -> %s [%d/%d]: %s",
+			c.Rota[t], c.Rota[t+1], c.Ocupados[t], c.Assentos, lista))
+	}
+
+	return linhas, nil
 }
 
 // MinhasReservas lista as reservas de um passageiro, prontas para exibir.
@@ -367,8 +491,11 @@ func (b *Banco) MinhasReservas(passageiro string) []string {
 		}
 
 		detalhe := ""
-		if r.Estado == "pendente" {
+		switch {
+		case r.Estado == "pendente":
 			detalhe = fmt.Sprintf(" | expira em %s", time.Until(r.Expira).Round(time.Second))
+		case r.Motivo != "":
+			detalhe = " | " + r.Motivo
 		}
 
 		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %d trecho(s)%s",
@@ -388,7 +515,7 @@ func (b *Banco) buscarDiretas(origem, destino, data string) []protocolo.Opcao {
 	var opcoes []protocolo.Opcao
 
 	for _, c := range b.Caronas {
-		if c.Data != data {
+		if c.Cancelada || c.Data != data {
 			continue
 		}
 
@@ -426,7 +553,7 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 	var opcoes []protocolo.Opcao
 
 	for _, primeira := range b.Caronas {
-		if primeira.Data != data {
+		if primeira.Cancelada || primeira.Data != data {
 			continue
 		}
 
@@ -449,7 +576,7 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 			}
 
 			for _, segunda := range b.Caronas {
-				if segunda.ID == primeira.ID || segunda.Data != data {
+				if segunda.ID == primeira.ID || segunda.Cancelada || segunda.Data != data {
 					continue
 				}
 
@@ -476,6 +603,23 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 	}
 
 	return opcoes
+}
+
+// cancelar desfaz uma reserva ativa: devolve os assentos e registra o motivo.
+func (b *Banco) cancelar(r *Reserva, motivo string) {
+	b.devolverAssentos(r)
+	r.Estado = "cancelada"
+	r.Motivo = motivo
+}
+
+// devolverAssentos libera um assento em cada trecho de cada item da reserva.
+// Usada pela expiracao e pelos dois cancelamentos.
+func (b *Banco) devolverAssentos(r *Reserva) {
+	for _, item := range r.Itens {
+		if c := b.acharCarona(item.CaronaID); c != nil {
+			c.liberar(item.De, item.Ate)
+		}
+	}
 }
 
 // persistir grava o banco no arquivo. Se nao houver arquivo configurado
@@ -520,6 +664,21 @@ func (b *Banco) acharReserva(id int) *Reserva {
 		}
 	}
 	return nil
+}
+
+// ativa diz se a reserva ainda segura assentos.
+func (r Reserva) ativa() bool {
+	return r.Estado == "pendente" || r.Estado == "paga"
+}
+
+// usa diz se algum item da reserva e da carona indicada.
+func (r Reserva) usa(caronaID int) bool {
+	for _, item := range r.Itens {
+		if item.CaronaID == caronaID {
+			return true
+		}
+	}
+	return false
 }
 
 // trechos diz quantos trechos a carona tem: uma cidade a menos que a rota.

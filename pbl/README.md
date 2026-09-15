@@ -21,12 +21,41 @@ Também existem usuários de teste prontos, senha `123` para todos:
 | `ana`, `davi` | motorista |
 | `bruno`, `carla` | passageiro |
 
+## O que cada um faz
+
+| Usuário | Ações |
+|---|---|
+| Motorista | cadastrar carona, listar as suas caronas, ver os passageiros de cada trecho, cancelar carona |
+| Passageiro | buscar viagens (diretas e com uma conexão), reservar, pagar, listar reservas, cancelar reserva |
+
 ## Testes
 
 ```
-go test ./...          # todos
-go test -race ./...    # com detector de corrida (exige Go 64 bits)
+go test ./...          # regras, atomicidade, concorrência e queda de cliente
+go test -race ./...    # o mesmo, com detector de corrida (exige Go 64 bits)
 ```
+
+### Teste de carga
+
+Clientes reais, cada um com a sua conexão TCP, disputando os mesmos assentos
+ao mesmo tempo contra o servidor rodando:
+
+```
+go run ./servidor                               # terminal 1
+go run ./carga                                  # terminal 2: 200 clientes, 10 lugares
+go run ./carga -clientes 1000 -assentos 50
+go run ./carga -servidor 192.168.0.10:8080      # contra outra máquina
+```
+
+Ao final ele confere, só pelo protocolo:
+
+- nenhum lugar vendido duas vezes;
+- todos os lugares disponíveis foram vendidos;
+- cada reserva aceita tem número único;
+- nenhum itinerário ficou pela metade (a disputa usa duas caronas, e cada
+  reserva aceita precisa ocupar as duas).
+
+E mostra a latência da reserva (mínima, média, p50, p95 e máxima).
 
 ## Docker
 
@@ -43,7 +72,7 @@ docker compose down               # derruba
 | `VAIJUNTO_RESERVA` | `10m` | prazo para pagar antes do assento voltar |
 | `VAIJUNTO_VARREDURA` | `30s` | frequência da checagem de reservas vencidas |
 | `VAIJUNTO_DADOS` | `vaijunto.json` | arquivo onde o estado é gravado |
-| `VAIJUNTO_SERVIDOR` | `localhost:8080` | onde o cliente procura o servidor |
+| `VAIJUNTO_SERVIDOR` | `localhost:8080` | onde o cliente e a carga procuram o servidor |
 
 Para demonstrar a expiração sem esperar 10 minutos:
 
@@ -64,6 +93,7 @@ protocolo/   mensagens trocadas na rede (Pedido, Resposta, Item, Opcao)
 dados/       estado do sistema, mutex e regras de negócio
 servidor/    aceita conexões, roteia ações, expira reservas
 cliente/     menus de terminal
+carga/       teste de carga com clientes reais via socket
 ```
 
 ## Como funciona
@@ -71,6 +101,12 @@ cliente/     menus de terminal
 **Protocolo.** Uma linha de texto é uma mensagem, e o conteúdo é JSON. É isso
 que resolve o TCP não ter fronteira de mensagem: quem lê sabe que a mensagem
 acabou ao encontrar o `\n`.
+
+**Queda de cliente.** O servidor separa dois tipos de erro de leitura. Se a
+linha chegou mas o JSON está errado (`protocolo.ErrMensagemInvalida`), ele
+responde o erro e continua atendendo. Qualquer outro erro é da conexão: o
+cliente fechou, caiu de forma abrupta ou a rede sumiu. Nesse caso a goroutine
+daquele cliente termina, e os demais seguem normalmente.
 
 **Cadastro de usuário.** `CadastrarUsuario` faz a checagem "login já existe" e
 a escrita no mapa dentro do mesmo `Lock`. Se a checagem ficasse fora, duas
@@ -91,6 +127,12 @@ um mesmo assento pode estar livre num trecho e ocupado em outro.
 primeiro confere todos os trechos pedidos sem alterar nada, e só aplica se
 todos passarem. Como o mutex não é solto entre as fases, ninguém se intromete
 no meio. É o que garante o "pegou um trecho não fica sem o outro".
+
+**Cancelamentos.** Cancelar uma reserva devolve os assentos de todos os
+trechos dela. Cancelar uma carona desfaz todas as reservas ativas que passam
+por ela — e, se uma dessas reservas era uma conexão com outra carona, a
+reserva cai inteira e o assento volta nas duas. Liberar só a parte da carona
+cancelada deixaria o passageiro com meia viagem.
 
 **Expiração.** Reserva nasce `pendente` com prazo. Uma goroutine com
 `time.Ticker` devolve os assentos das que venceram. Reserva paga nunca expira.
@@ -117,7 +159,13 @@ Suba o servidor com `VAIJUNTO_RESERVA=30s VAIJUNTO_VARREDURA=5s` e siga:
 4. ninguém paga; em até 35s o servidor loga `expirei 1 reserva(s) nao paga(s)`
 5. `carla` busca de novo: o assento voltou
 6. `carla` reserva e paga; passado o prazo, continua `paga`
+7. `ana` abre "passageiros" da carona e vê a `carla` no trecho dela; depois
+   cancela a carona, e a reserva da `carla` aparece como `cancelada` com o
+   motivo
 
 Para mostrar a conexão, peça a `davi` que cadastre `Ilheus, Porto Seguro` na
 mesma data e busque Feira → Porto Seguro: aparece um itinerário com duas
 caronas, que é reservado de forma atômica.
+
+Para mostrar a concorrência sob carga, rode `go run ./carga -clientes 1000`
+com o servidor de pé.

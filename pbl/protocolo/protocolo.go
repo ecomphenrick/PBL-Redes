@@ -1,19 +1,15 @@
-// Package protocolo define as mensagens que cliente e servidor trocam.
-//
-// A regra do protocolo e simples: UMA LINHA DE TEXTO = UMA MENSAGEM, e o
-// conteudo da linha e um JSON. E isso que resolve o problema de o TCP nao ter
-// fronteira de mensagem: quem le sabe que a mensagem acabou quando acha o \n.
 package protocolo
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
 
-// Item e um pedaco de viagem: "na carona X, da cidade De ate a cidade Ate".
-// De e Ate sao INDICES dentro da Rota da carona, nao nomes de cidade.
+var ErrMensagemInvalida = errors.New("mensagem invalida") //json invalido
+
 type Item struct {
 	CaronaID int `json:"carona_id"`
 	De       int `json:"de"`
@@ -52,7 +48,10 @@ type Pedido struct {
 	// reservar
 	Itens []Item `json:"itens,omitempty"`
 
-	// pagar
+	// passageiros, cancelar_carona
+	CaronaID int `json:"carona_id,omitempty"`
+
+	// pagar, cancelar_reserva
 	ReservaID int `json:"reserva_id,omitempty"`
 }
 
@@ -63,12 +62,17 @@ type Resposta struct {
 	Mensagem string `json:"mensagem,omitempty"`
 
 	Tipo      string   `json:"tipo,omitempty"`       // login
+	CaronaID  int      `json:"carona_id,omitempty"`  // cadastrar
 	Opcoes    []Opcao  `json:"opcoes,omitempty"`     // buscar
 	Linhas    []string `json:"linhas,omitempty"`     // listagens
 	ReservaID int      `json:"reserva_id,omitempty"` // reservar
 }
 
 // LerPedido le uma linha e transforma o JSON em Pedido.
+//
+// Dois tipos de erro podem voltar, e quem chama PRECISA distinguir:
+//   - erro de leitura (EOF, conexao resetada): a conexao acabou;
+//   - ErrMensagemInvalida: a linha veio, mas o JSON esta errado.
 func LerPedido(leitor *bufio.Reader) (Pedido, error) {
 	linha, err := leitor.ReadString('\n')
 	if err != nil {
@@ -77,12 +81,13 @@ func LerPedido(leitor *bufio.Reader) (Pedido, error) {
 
 	var p Pedido
 	if err := json.Unmarshal([]byte(linha), &p); err != nil {
-		return Pedido{}, fmt.Errorf("pedido invalido: %w", err)
+		return Pedido{}, fmt.Errorf("%w: %v", ErrMensagemInvalida, err)
 	}
 	return p, nil
 }
 
 // LerResposta le uma linha e transforma o JSON em Resposta.
+// Os erros seguem a mesma regra do LerPedido.
 func LerResposta(leitor *bufio.Reader) (Resposta, error) {
 	linha, err := leitor.ReadString('\n')
 	if err != nil {
@@ -91,7 +96,7 @@ func LerResposta(leitor *bufio.Reader) (Resposta, error) {
 
 	var r Resposta
 	if err := json.Unmarshal([]byte(linha), &r); err != nil {
-		return Resposta{}, fmt.Errorf("resposta invalida: %w", err)
+		return Resposta{}, fmt.Errorf("%w: %v", ErrMensagemInvalida, err)
 	}
 	return r, nil
 }

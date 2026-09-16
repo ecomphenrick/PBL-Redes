@@ -7,8 +7,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"vaijunto/protocolo"
+)
+
+// Timeouts do cliente. Sem eles, um IP errado ou um servidor travado deixaria
+// o programa parado sem mensagem nenhuma.
+const (
+	prazoConexao  = 5 * time.Second  // para conseguir conectar
+	prazoResposta = 10 * time.Second // para o servidor responder cada pedido
 )
 
 type cliente struct {
@@ -18,7 +26,7 @@ type cliente struct {
 }
 
 func main() {
-	conexao, err := net.Dial("tcp", endereco()) //abre conexão tcp com o server
+	conexao, err := net.DialTimeout("tcp", endereco(), prazoConexao) //abre conexão tcp com o server
 	if err != nil {
 		fmt.Println("nao consegui conectar:", err)
 		return
@@ -380,6 +388,10 @@ func (c *cliente) cancelarReserva() {
 }
 
 func (c *cliente) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
+	// O prazo vale para enviar E receber. E renovado a cada pedido, entao o
+	// tempo que a pessoa passa pensando no menu nao conta.
+	c.conexao.SetDeadline(time.Now().Add(prazoResposta))
+
 	if err := protocolo.EnviarPedido(c.conexao, p); err != nil {
 		return protocolo.Resposta{}, err
 	}

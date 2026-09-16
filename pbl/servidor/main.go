@@ -13,22 +13,28 @@ import (
 	"vaijunto/protocolo"
 )
 
-// intervaloPadrao e de quanto em quanto tempo o servidor procura reservas
-// vencidas. Pode ser encurtado por variavel de ambiente na hora de demonstrar.
-const intervaloPadrao = 30 * time.Second
+const intervaloPadrao = 30 * time.Second //intervalo de varredura
 
-// sessao guarda quem esta logado NAQUELA conexao.
+// Timeouts de socket. Sao var (e nao const) para os testes poderem encurtar.
 //
-// Repare que ela NAO precisa de mutex: cada goroutine de atender() cria a sua
-// propria sessao como variavel local, entao ninguem compartilha nada. So o
-// Banco, que e o mesmo para todos, precisa de protecao.
+// tempoOcioso: se o cliente ficar esse tempo sem mandar NADA, o servidor
+// encerra a conexao. Protege contra cliente que sumiu sem avisar (cabo
+// puxado, maquina travada) e contra conexao aberta so para ocupar recurso.
+//
+// prazoEscrita: tempo maximo para conseguir entregar uma resposta. Se o
+// cliente parou de ler, a goroutine nao fica presa para sempre no Write.
+var (
+	tempoOcioso  = 15 * time.Minute
+	prazoEscrita = 10 * time.Second
+)
+
 type sessao struct {
 	usuario dados.Usuario
-}
+} //guara o user que esta logado.
 
 func main() {
-	varredura := configurarTempos()
-	banco := dados.Carregar(arquivoDeDados())
+	varredura := configurarTempos()           //configura os tempos de reserva e varredura.
+	banco := dados.Carregar(arquivoDeDados()) //carrega o mesmo banco para as goroutines
 
 	fmt.Printf("reserva expira em %s, varrendo a cada %s\n",
 		dados.TempoDeReserva, varredura)
@@ -42,51 +48,41 @@ func main() {
 		return
 	}
 	defer ouvinte.Close()
-
+	//abre server na porta 8080 e so fecha quando a main acabar
 	fmt.Println("servidor ouvindo em :8080")
 
 	for {
-		conexao, err := ouvinte.Accept()
+		conexao, err := ouvinte.Accept() //bloqueia ate cliente conectar e retorna conexao
 		if err != nil {
 			fmt.Println("erro ao aceitar conexao:", err)
-			continue
+			continue //se falhar o cliente, continua esperando o proximo
 		}
 
-		fmt.Println("cliente conectado:", conexao.RemoteAddr())
-		go atender(conexao, banco)
+		fmt.Println("cliente conectado:", conexao.RemoteAddr()) //se nao falhar continua para printar a porta conectada
+		go atender(conexao, banco)                              //goroutine propria e volta ao inicio do for para esperar mais clientes.
 	}
 }
 
-// expirarPeriodicamente roda para sempre, numa goroutine propria.
-//
-// Ela tambem mexe no Banco, entao disputa o mesmo mutex que as goroutines dos
-// clientes -- e e justamente por isso que nao da problema.
-func expirarPeriodicamente(banco *dados.Banco, intervalo time.Duration) {
-	relogio := time.NewTicker(intervalo)
-	defer relogio.Stop()
+func expirarPeriodicamente(banco *dados.Banco, intervalo time.Duration) { //recebe o banco e o intervalo
+	relogio := time.NewTicker(intervalo) //a cada intervalo coloca a hora em relogio.c
+	defer relogio.Stop()                 //desliga o relógio quando a função terminar
 
-	for range relogio.C {
-		if n := banco.ExpirarVencidas(); n > 0 {
+	for range relogio.C { //loop infinito que só para quando a função terminar.
+		if n := banco.ExpirarVencidas(); n > 0 { //conta quantas reservas foram expiradas.
 			fmt.Printf("expirei %d reserva(s) nao paga(s)\n", n)
 		}
 	}
 }
 
-// arquivoDeDados diz onde o banco JSON fica gravado.
-// No Docker apontamos para um volume, para os dados sobreviverem ao container.
 func arquivoDeDados() string {
 	if v := os.Getenv("VAIJUNTO_DADOS"); v != "" {
 		return v
 	}
-	return "vaijunto.json"
+	return "vaijunto.json" //devolve o arquivo de dados, vaijunto.json ou algum outro específico.
 }
 
-// configurarTempos le as variaveis de ambiente que encurtam os prazos.
-// Para demonstrar a expiracao sem esperar 10 minutos:
-//
-//	VAIJUNTO_RESERVA=20s VAIJUNTO_VARREDURA=5s go run ./servidor
 func configurarTempos() time.Duration {
-	if v := os.Getenv("VAIJUNTO_RESERVA"); v != "" {
+	if v := os.Getenv("VAIJUNTO_RESERVA"); v != "" { //para ler a variavel do docker 30s ou entao vale o tempo padrao de 10mi
 		if d, err := time.ParseDuration(v); err == nil {
 			dados.TempoDeReserva = d
 		}
@@ -103,30 +99,34 @@ func configurarTempos() time.Duration {
 }
 
 func atender(conexao net.Conn, banco *dados.Banco) {
-	defer conexao.Close()
+	defer conexao.Close() //so acaba quando a funcao atender acabar
 
 	leitor := bufio.NewReader(conexao)
 
-	// A sessao nasce e morre junto com esta conexao.
-	var s sessao
+	var s sessao //sessao
 
 	for {
-		pedido, err := protocolo.LerPedido(leitor)
+		// Renova o prazo a cada pedido: o relogio conta o tempo PARADO desde a
+		// ultima mensagem, nao o tempo total da conexao.
+		conexao.SetReadDeadline(time.Now().Add(tempoOcioso))
+
+		pedido, err := protocolo.LerPedido(leitor) //bloqueia ate chegar linha do cliente.
 
 		// A linha chegou inteira, mas nao e JSON valido: o problema e da
 		// mensagem, nao da conexao. Avisa o cliente e continua atendendo.
 		if errors.Is(err, protocolo.ErrMensagemInvalida) {
-			protocolo.EnviarResposta(conexao, protocolo.Resposta{OK: false, Erro: err.Error()})
+			if responder(conexao, protocolo.Resposta{OK: false, Erro: err.Error()}) != nil {
+				return
+			}
 			continue
 		}
 
-		// Qualquer OUTRO erro e da conexao: o cliente fechou (EOF), caiu de
-		// forma abrupta (connection reset) ou a rede sumiu. Em todos os casos
-		// nao ha mais ninguem do outro lado, entao a goroutine precisa acabar.
-		//
-		// Uma versao anterior so encerrava no EOF e tratava o resto como JSON
-		// ruim: numa queda abrupta, voltava a ler, recebia o mesmo erro na hora
-		// e girava para sempre a 100% de um nucleo.
+		// Estourou o tempoOcioso: o cliente ficou mudo tempo demais.
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			fmt.Printf("conexao com %v encerrada por inatividade\n", conexao.RemoteAddr())
+			return
+		}
+		//se der problema com o server-client
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				fmt.Println("cliente desconectou:", conexao.RemoteAddr())
@@ -136,32 +136,34 @@ func atender(conexao net.Conn, banco *dados.Banco) {
 			return
 		}
 
-		fmt.Printf("recebido de %v: acao=%q\n", conexao.RemoteAddr(), pedido.Acao)
+		fmt.Printf("recebido de %v: acao=%q\n", conexao.RemoteAddr(), pedido.Acao) //acao valida
 
 		resposta := executar(pedido, &s, banco)
 
-		if err := protocolo.EnviarResposta(conexao, resposta); err != nil {
+		if err := responder(conexao, resposta); err != nil {
 			fmt.Println("erro ao responder:", err)
 			return
-		}
+		} //transforma a resposta em json e envia pro cliente.
 	}
 }
 
-// executar decide o que fazer com cada acao. Este switch e o roteador do
-// servidor: e o indice do sistema inteiro.
-//
-// A sessao vem como PONTEIRO (*sessao) porque o case "login" precisa
-// MODIFICAR quem esta logado. Se viesse por valor, alteraria uma copia.
+// responder envia a resposta com prazo: se o cliente nao ler em prazoEscrita,
+// o Write desiste com erro em vez de travar a goroutine.
+func responder(conexao net.Conn, r protocolo.Resposta) error {
+	conexao.SetWriteDeadline(time.Now().Add(prazoEscrita))
+	return protocolo.EnviarResposta(conexao, r)
+}
+
 func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Resposta {
-	// Barreira de autenticacao: vale para toda acao nova que criarmos daqui
-	// em diante, sem precisar repetir a checagem em cada case.
+	// função roteador, olha a ação chama a função em dados e monta a resposta.
 	if exigeLogin(p.Acao) && s.usuario.Login == "" {
 		return erro("faca login primeiro")
 	}
+	//se nao tiver logado devolve erro.
 
 	switch p.Acao {
 	case "ping":
-		return protocolo.Resposta{OK: true, Mensagem: "pong"}
+		return protocolo.Resposta{OK: true, Mensagem: "pong"} //padrao para teste
 
 	case "registrar":
 		if err := banco.CadastrarUsuario(p.Usuario, p.Senha, p.Tipo); err != nil {
@@ -292,9 +294,7 @@ func erro(mensagem string) protocolo.Resposta {
 	return protocolo.Resposta{OK: false, Erro: mensagem}
 }
 
-// exigeLogin diz quais acoes precisam de usuario autenticado.
-// So "ping", "login" e "registrar" ficam de fora -- quem esta criando conta
-// ainda nao tem como estar logado. Todo o resto exige.
+// quais acoes precisam de login.
 func exigeLogin(acao string) bool {
 	return acao != "ping" && acao != "login" && acao != "registrar"
 }

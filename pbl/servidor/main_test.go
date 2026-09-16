@@ -99,3 +99,27 @@ func TestJSONInvalidoNaoDerrubaConexao(t *testing.T) {
 		t.Errorf("esperava pong, veio %+v", r)
 	}
 }
+
+// TestClienteOciosoEDesconectado: cliente conectado que nao manda nada tem a
+// conexao encerrada pelo servidor quando estoura o tempoOcioso.
+func TestClienteOciosoEDesconectado(t *testing.T) {
+	original := tempoOcioso
+	tempoOcioso = 200 * time.Millisecond
+	defer func() { tempoOcioso = original }()
+
+	endereco, terminou := servidorDeTeste(t)
+
+	cliente, err := net.Dial("tcp", endereco)
+	if err != nil {
+		t.Fatalf("nao consegui conectar: %v", err)
+	}
+	defer cliente.Close()
+
+	// Nao manda nada: so espera.
+	select {
+	case <-terminou:
+		// certo: o servidor desistiu do cliente mudo
+	case <-time.After(2 * time.Second):
+		t.Fatal("o servidor nao encerrou a conexao ociosa")
+	}
+}

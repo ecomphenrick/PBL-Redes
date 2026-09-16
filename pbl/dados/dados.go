@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +186,21 @@ func (b *Banco) Buscar(origem, destino, data string) []protocolo.Opcao {
 	b.expirarVencidas()
 
 	opcoes := b.buscarDiretas(origem, destino, data)
-	return append(opcoes, b.buscarComConexao(origem, destino, data)...)
+	opcoes = append(opcoes, b.buscarComConexao(origem, destino, data)...)
+
+	// Criterios de ordenacao, nesta prioridade:
+	//  1. menos caronas primeiro: direta (1 item) antes de conexao (2 itens),
+	//     porque trocar de carro no meio e mais incomodo e tem mais risco;
+	//  2. entre as do mesmo tipo, a mais barata primeiro.
+	// SliceStable mantem a ordem de cadastro quando tudo empata.
+	sort.SliceStable(opcoes, func(i, j int) bool {
+		if len(opcoes[i].Itens) != len(opcoes[j].Itens) {
+			return len(opcoes[i].Itens) < len(opcoes[j].Itens)
+		}
+		return opcoes[i].Preco < opcoes[j].Preco
+	})
+
+	return opcoes
 }
 
 func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error) {

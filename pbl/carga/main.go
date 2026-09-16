@@ -275,8 +275,16 @@ type conexao struct {
 	leitor *bufio.Reader
 }
 
+// Prazos do teste de carga. O de resposta e folgado porque, com centenas de
+// clientes disputando o mesmo mutex, uma resposta pode demorar mais que o normal
+// sem que isso seja falha.
+const (
+	prazoConexao  = 5 * time.Second
+	prazoResposta = 30 * time.Second
+)
+
 func conectar(endereco string) (*conexao, error) {
-	c, err := net.Dial("tcp", endereco)
+	c, err := net.DialTimeout("tcp", endereco, prazoConexao)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +292,8 @@ func conectar(endereco string) (*conexao, error) {
 }
 
 func (c *conexao) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
+	c.SetDeadline(time.Now().Add(prazoResposta))
+
 	if err := protocolo.EnviarPedido(c, p); err != nil {
 		return protocolo.Resposta{}, err
 	}

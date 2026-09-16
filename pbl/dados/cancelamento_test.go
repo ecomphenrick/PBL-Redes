@@ -38,7 +38,9 @@ func TestCancelarReservaDevolveAssento(t *testing.T) {
 
 func TestRegrasDeCancelarReserva(t *testing.T) {
 	original := TempoDeReserva
-	TempoDeReserva = time.Millisecond
+	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
+	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 3)
@@ -49,7 +51,7 @@ func TestRegrasDeCancelarReserva(t *testing.T) {
 	}
 
 	vencida, _ := b.Reservar("bruno", trecho(id, 0, 1))
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	b.ExpirarVencidas()
 
 	if err := b.CancelarReserva("carla", paga); err == nil {

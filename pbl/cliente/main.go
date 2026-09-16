@@ -296,11 +296,6 @@ func (c *cliente) menuPassageiro() {
 }
 
 func (c *cliente) buscarEReservar() {
-	// Mostra o que existe antes, para o passageiro nao chutar cidade e data.
-	if !c.listar(protocolo.Pedido{Acao: "caronas"}, "nenhuma carona com vaga no momento") {
-		return
-	}
-
 	origem, ok := c.ler("origem: ")
 	if !ok {
 		return

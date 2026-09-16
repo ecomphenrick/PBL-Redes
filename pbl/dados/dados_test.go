@@ -314,7 +314,9 @@ func TestBuscaComConexao(t *testing.T) {
 // TestExpiracaoDevolveAssento: quem nao paga perde o assento.
 func TestExpiracaoDevolveAssento(t *testing.T) {
 	original := TempoDeReserva
-	TempoDeReserva = time.Millisecond
+	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
+	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 1)
@@ -328,7 +330,7 @@ func TestExpiracaoDevolveAssento(t *testing.T) {
 		t.Fatal("carla nao deveria conseguir: o assento esta ocupado")
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 
 	if n := b.ExpirarVencidas(); n != 1 {
 		t.Fatalf("esperava 1 reserva expirada, deu %d", n)
@@ -343,7 +345,9 @@ func TestExpiracaoDevolveAssento(t *testing.T) {
 // TestReservaPagaNaoExpira: pagou, o assento e seu para sempre.
 func TestReservaPagaNaoExpira(t *testing.T) {
 	original := TempoDeReserva
-	TempoDeReserva = time.Millisecond
+	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
+	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 1)
@@ -357,7 +361,7 @@ func TestReservaPagaNaoExpira(t *testing.T) {
 		t.Fatalf("o pagamento deveria funcionar: %v", err)
 	}
 
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 
 	if n := b.ExpirarVencidas(); n != 0 {
 		t.Errorf("reserva paga nao pode expirar, mas expirou %d", n)
@@ -561,5 +565,53 @@ func TestOcupadosNasceZerado(t *testing.T) {
 		if n != 0 {
 			t.Errorf("trecho %d deveria nascer zerado, esta em %d", i, n)
 		}
+	}
+}
+
+// TestVencidaExpiraSemEsperarVarredura: passou do prazo, a reserva ja conta
+// como expirada na proxima operacao, mesmo que a goroutine de varredura ainda
+// nao tenha rodado. Antes dava para pagar uma reserva vencida nesse intervalo.
+func TestVencidaExpiraSemEsperarVarredura(t *testing.T) {
+	original := TempoDeReserva
+	TempoDeReserva = 50 * time.Millisecond
+	defer func() { TempoDeReserva = original }()
+
+	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 1)
+
+	reserva, err := b.Reservar("bruno", trecho(id, 0, 1))
+	if err != nil {
+		t.Fatalf("deveria funcionar: %v", err)
+	}
+
+	time.Sleep(80 * time.Millisecond)
+
+	// Repare: ninguem chamou ExpirarVencidas.
+	if err := b.Pagar("bruno", reserva); err == nil {
+		t.Error("reserva vencida nao pode ser paga")
+	}
+	if _, err := b.Reservar("carla", trecho(id, 0, 1)); err != nil {
+		t.Errorf("o assento da reserva vencida deveria estar livre: %v", err)
+	}
+}
+
+// TestDataInvalida: so aceita AAAA-MM-DD que exista no calendario.
+func TestDataInvalida(t *testing.T) {
+	validas := []string{"2026-09-20", "2028-02-29"}
+	invalidas := []string{"", "20/09/2026", "2026-9-20", "amanha", "2026-02-30", "2026-13-01"}
+
+	for _, d := range validas {
+		if !DataValida(d) {
+			t.Errorf("%q deveria ser valida", d)
+		}
+	}
+	for _, d := range invalidas {
+		if DataValida(d) {
+			t.Errorf("%q deveria ser invalida", d)
+		}
+	}
+
+	b := NovoBanco()
+	if _, err := b.CadastrarCarona("davi", []string{"Feira", "Salvador"}, "20/09/2026", 2, 30); err == nil {
+		t.Error("cadastro com data fora do formato deveria dar erro")
 	}
 }

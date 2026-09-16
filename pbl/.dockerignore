@@ -1,0 +1,4 @@
+# O que NAO entra na imagem. O banco local ficaria "embutido" nela.
+vaijunto.json
+*.exe
+.git

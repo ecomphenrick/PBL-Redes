@@ -15,6 +15,19 @@ import (
 // 10 min de reserva.
 var TempoDeReserva = 10 * time.Minute
 
+// formatoData e o molde de data do Go: o layout e escrito com a data de
+// referencia 2006-01-02, e o Go entende "ano-mes-dia com zeros".
+const formatoData = "2006-01-02"
+
+var ErrDataInvalida = errors.New("data invalida: use o formato AAAA-MM-DD (ex.: 2026-09-20)")
+
+// DataValida diz se a data esta no formato AAAA-MM-DD e existe de verdade
+// (2026-02-30 e recusada, porque time.Parse confere o calendario).
+func DataValida(data string) bool {
+	_, err := time.Parse(formatoData, data)
+	return err == nil
+}
+
 // Usuario e quem usa o sistema. Tipo e "motorista" ou "passageiro".
 type Usuario struct {
 	Login string `json:"login"`
@@ -140,8 +153,8 @@ func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, as
 	if assentos < 1 {
 		return 0, errors.New("a carona precisa de pelo menos 1 assento")
 	}
-	if data == "" {
-		return 0, errors.New("informe a data")
+	if !DataValida(data) {
+		return 0, ErrDataInvalida
 	}
 
 	//apos conferir necessidades, trava o banco
@@ -169,6 +182,7 @@ func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, as
 func (b *Banco) Buscar(origem, destino, data string) []protocolo.Opcao {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	opcoes := b.buscarDiretas(origem, destino, data)
 	return append(opcoes, b.buscarComConexao(origem, destino, data)...)
@@ -181,6 +195,7 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	for _, item := range itens {
 		c := b.acharCarona(item.CaronaID)
@@ -221,6 +236,7 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 func (b *Banco) Pagar(passageiro string, reservaID int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	r := b.acharReserva(reservaID)
 
@@ -251,6 +267,7 @@ func (b *Banco) Pagar(passageiro string, reservaID int) error {
 func (b *Banco) CancelarReserva(passageiro string, reservaID int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	r := b.acharReserva(reservaID)
 	if r == nil {
@@ -309,6 +326,13 @@ func (b *Banco) ExpirarVencidas() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	return b.expirarVencidas()
+}
+
+// expirarVencidas e a versao interna, sem lock. As funcoes publicas que mexem
+// com reservas chamam ela logo depois do Lock: assim uma reserva vencida
+// expira NA HORA, sem esperar a goroutine de varredura passar.
+func (b *Banco) expirarVencidas() int {
 	agora := time.Now()
 	expiradas := 0
 
@@ -357,6 +381,7 @@ func (b *Banco) MinhasCaronas(motorista string) []string {
 func (b *Banco) PassageirosDaCarona(motorista string, caronaID int) ([]string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	c := b.acharCarona(caronaID)
 	if c == nil {
@@ -406,6 +431,7 @@ func (b *Banco) PassageirosDaCarona(motorista string, caronaID int) ([]string, e
 func (b *Banco) MinhasReservas(passageiro string) []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expirarVencidas()
 
 	var linhas []string
 
@@ -433,39 +459,6 @@ func (b *Banco) MinhasReservas(passageiro string) []string {
 
 		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %s%s",
 			r.ID, r.Estado, strings.Join(caminho, " + "), detalhe))
-	}
-
-	return linhas
-}
-
-// CaronasDisponiveis lista as caronas nao canceladas que ainda tem vaga em
-// algum trecho. Serve para o passageiro saber quais cidades e datas existem
-// antes de buscar.
-func (b *Banco) CaronasDisponiveis() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	var linhas []string
-
-	for _, c := range b.Caronas {
-		if c.Cancelada {
-			continue
-		}
-
-		// Tem vaga se pelo menos um trecho nao esta lotado.
-		temVaga := false
-		for t := 0; t < c.trechos(); t++ {
-			if c.livres(t, t+1) > 0 {
-				temVaga = true
-				break
-			}
-		}
-		if !temVaga {
-			continue
-		}
-
-		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | motorista %s",
-			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Motorista))
 	}
 
 	return linhas

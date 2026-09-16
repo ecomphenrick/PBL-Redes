@@ -398,6 +398,11 @@ func TestRegrasDePagamento(t *testing.T) {
 func TestAutenticar(t *testing.T) {
 	b := NovoBanco()
 
+	// O banco nasce vazio: o teste cria a conta de que precisa.
+	if err := b.CadastrarUsuario("ana", "123", "motorista"); err != nil {
+		t.Fatalf("nao consegui criar a conta de teste: %v", err)
+	}
+
 	casos := []struct {
 		nome, login, senha string
 		quer               bool
@@ -435,7 +440,6 @@ func TestCadastrarUsuario(t *testing.T) {
 		nome, login, senha, tipo string
 	}{
 		{"login repetido", "henrick", "outra", "passageiro"},
-		{"login que ja vem no banco", "ana", "x", "passageiro"},
 		{"login vazio", "", "senha", "passageiro"},
 		{"login so com espacos", "   ", "senha", "passageiro"},
 		{"senha vazia", "novo", "", "passageiro"},

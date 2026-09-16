@@ -237,6 +237,9 @@ func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Respo
 
 	// ---- acoes do passageiro ----
 
+	case "caronas":
+		return protocolo.Resposta{OK: true, Linhas: banco.CaronasDisponiveis()}
+
 	case "buscar":
 		opcoes := banco.Buscar(p.Origem, p.Destino, p.Data)
 		return protocolo.Resposta{

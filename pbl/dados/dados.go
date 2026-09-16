@@ -422,8 +422,50 @@ func (b *Banco) MinhasReservas(passageiro string) []string {
 			detalhe = " | " + r.Motivo
 		}
 
-		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %d trecho(s)%s",
-			r.ID, r.Estado, len(r.Itens), detalhe))
+		// Monta o caminho de cada item, para o passageiro saber que reserva e essa.
+		var caminho []string
+		for _, item := range r.Itens {
+			if c := b.acharCarona(item.CaronaID); c != nil {
+				caminho = append(caminho, fmt.Sprintf("%s -> %s (carona %d, %s)",
+					c.Rota[item.De], c.Rota[item.Ate], c.ID, c.Data))
+			}
+		}
+
+		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %s%s",
+			r.ID, r.Estado, strings.Join(caminho, " + "), detalhe))
+	}
+
+	return linhas
+}
+
+// CaronasDisponiveis lista as caronas nao canceladas que ainda tem vaga em
+// algum trecho. Serve para o passageiro saber quais cidades e datas existem
+// antes de buscar.
+func (b *Banco) CaronasDisponiveis() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var linhas []string
+
+	for _, c := range b.Caronas {
+		if c.Cancelada {
+			continue
+		}
+
+		// Tem vaga se pelo menos um trecho nao esta lotado.
+		temVaga := false
+		for t := 0; t < c.trechos(); t++ {
+			if c.livres(t, t+1) > 0 {
+				temVaga = true
+				break
+			}
+		}
+		if !temVaga {
+			continue
+		}
+
+		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | motorista %s",
+			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Motorista))
 	}
 
 	return linhas

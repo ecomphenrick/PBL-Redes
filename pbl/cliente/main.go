@@ -65,10 +65,11 @@ func endereco() string {
 }
 
 func (c *cliente) entrada() (string, bool) {
-	fmt.Println("=== Vaijunto ===")
-
 	for {
-		fmt.Println("\n1) entrar   2) criar conta   0) sair")
+		menu("VAIJUNTO",
+			"1) entrar",
+			"2) criar conta",
+			"0) sair")
 
 		switch c.opcao() {
 		case "1":
@@ -172,7 +173,12 @@ func (c *cliente) autenticar(usuario, senha string) (string, bool) {
 
 func (c *cliente) menuMotorista() {
 	for {
-		fmt.Println("\n1) cadastrar carona   2) minhas caronas   3) passageiros   4) cancelar carona   0) voltar")
+		menu("MOTORISTA",
+			"1) cadastrar carona",
+			"2) minhas caronas",
+			"3) passageiros de uma carona",
+			"4) cancelar carona",
+			"0) voltar")
 
 		switch c.opcao() {
 		case "1":
@@ -265,7 +271,12 @@ func (c *cliente) cancelarCarona() {
 
 func (c *cliente) menuPassageiro() {
 	for {
-		fmt.Println("\n1) buscar e reservar   2) minhas reservas   3) pagar   4) cancelar reserva   0) voltar")
+		menu("PASSAGEIRO",
+			"1) buscar e reservar",
+			"2) minhas reservas",
+			"3) pagar reserva",
+			"4) cancelar reserva",
+			"0) voltar")
 
 		switch c.opcao() {
 		case "1":
@@ -326,8 +337,9 @@ func (c *cliente) buscarEReservar() {
 		return
 	}
 
+	fmt.Println()
 	for i, o := range r.Opcoes {
-		fmt.Printf("  %d) %s | R$%d\n", i+1, o.Resumo, o.Preco)
+		item(fmt.Sprintf("%d) %s | total R$%d", i+1, o.Resumo, o.Preco))
 	}
 
 	escolha, ok := c.lerNumero("reservar qual? (0 cancela): ")
@@ -398,10 +410,29 @@ func (c *cliente) listar(p protocolo.Pedido, seVazio string) bool {
 		return false
 	}
 
+	fmt.Println()
 	for _, linha := range r.Linhas {
-		fmt.Println("  " + linha)
+		item(linha)
 	}
 	return true
+}
+
+// item quebra uma linha "carona 1 | 2026-09-20 | Feira -> Ilheus" em lista:
+// o primeiro pedaco vira o titulo e o resto fica indentado embaixo.
+func item(linha string) {
+	// Linha que ja vem indentada e continuacao do item anterior (ex.: os
+	// trechos em "passageiros"): so alinha com os detalhes.
+	if strings.HasPrefix(linha, " ") {
+		fmt.Println("    " + linha)
+		return
+	}
+
+	partes := strings.Split(linha, " | ")
+
+	fmt.Println("  " + partes[0])
+	for _, p := range partes[1:] {
+		fmt.Println("      " + p)
+	}
 }
 
 // mostrar imprime o resultado de um pedir(). Recebe os DOIS retornos de uma
@@ -417,6 +448,21 @@ func (c *cliente) mostrar(r protocolo.Resposta, err error) {
 	} else {
 		fmt.Println("  erro:", r.Erro)
 	}
+}
+
+// menu imprime um titulo emoldurado e as opcoes uma embaixo da outra.
+// "opcoes ...string" aceita quantas strings vierem, como uma lista.
+func menu(titulo string, opcoes ...string) {
+	linha := strings.Repeat("=", 32)
+
+	fmt.Println()
+	fmt.Println(linha)
+	fmt.Println("  " + titulo)
+	fmt.Println(linha)
+	for _, o := range opcoes {
+		fmt.Println("  " + o)
+	}
+	fmt.Println(linha)
 }
 
 func (c *cliente) opcao() string {

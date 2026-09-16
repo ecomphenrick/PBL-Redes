@@ -1,6 +1,6 @@
 # Build em dois estagios.
 #
-# O primeiro estagio tem o compilador Go inteiro (~300 MB) e produz os dois
+# O primeiro estagio tem o compilador Go inteiro (~300 MB) e produz os tres
 # binarios. O segundo copia so os binarios prontos para uma imagem minima.
 # E por isso que a imagem final fica em poucos megabytes: Go gera binario
 # estatico, entao nao precisa de runtime instalado.
@@ -19,7 +19,8 @@ COPY . .
 # CGO_ENABLED=0 forca binario 100% estatico, sem depender de bibliotecas C
 # do sistema. E o que permite rodar na imagem alpine crua.
 RUN CGO_ENABLED=0 go build -o /bin/servidor ./servidor && \
-    CGO_ENABLED=0 go build -o /bin/cliente  ./cliente
+    CGO_ENABLED=0 go build -o /bin/cliente  ./cliente && \
+    CGO_ENABLED=0 go build -o /bin/carga    ./carga
 
 # ---------------------------------------------------------------------------
 
@@ -27,6 +28,7 @@ FROM alpine:3.20
 
 COPY --from=build /bin/servidor /bin/servidor
 COPY --from=build /bin/cliente  /bin/cliente
+COPY --from=build /bin/carga    /bin/carga
 
 # Onde o JSON fica gravado. O docker-compose monta um volume aqui para os
 # dados sobreviverem ao container ser destruido.

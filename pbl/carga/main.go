@@ -50,10 +50,12 @@ func main() {
 // ---------------------------------------------------------------------------
 
 func rodar(endereco string, clientes, assentos int) error {
-	// Sufixo unico: a data e os logins desta rodada nao colidem com nada que
-	// ja exista no servidor, entao o teste pode rodar varias vezes seguidas.
+	// Sufixo unico: os logins desta rodada nao colidem com nada que ja exista
+	// no servidor, entao o teste pode rodar varias vezes seguidas. A data e
+	// longe no futuro para nao se misturar com caronas de verdade (e precisa
+	// estar no formato AAAA-MM-DD, senao o servidor recusa).
 	tag := strconv.FormatInt(time.Now().UnixNano(), 36)
-	data := "carga-" + tag
+	data := "2099-12-31"
 
 	fmt.Printf("servidor %s | %d clientes | %d lugares disputados\n\n", endereco, clientes, assentos)
 

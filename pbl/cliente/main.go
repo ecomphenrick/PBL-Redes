@@ -11,17 +11,14 @@ import (
 	"vaijunto/protocolo"
 )
 
-// cliente junta as tres coisas que toda tela precisa: por onde falar com o
-// servidor, por onde ouvir a resposta, e por onde ler o teclado.
-// Sem isso, cada funcao de menu teria que receber os tres como argumento.
 type cliente struct {
-	conexao  net.Conn
+	conexao  net.Conn //conexão tcp com o server
 	servidor *bufio.Reader
 	teclado  *bufio.Reader
 }
 
 func main() {
-	conexao, err := net.Dial("tcp", endereco())
+	conexao, err := net.Dial("tcp", endereco()) //abre conexão tcp com o server
 	if err != nil {
 		fmt.Println("nao consegui conectar:", err)
 		return
@@ -32,42 +29,47 @@ func main() {
 		conexao:  conexao,
 		servidor: bufio.NewReader(conexao),
 		teclado:  bufio.NewReader(os.Stdin),
-	}
+	} //usa a struct
 
-	tipo, ok := c.entrada()
-	if !ok {
-		return
-	}
+	// Ao sair do menu do motorista/passageiro, volta para o menu inicial.
+	// So o 0 do menu inicial fecha o programa.
+	for {
+		tipo, ok := c.entrada() //chama o menu inicial.
+		if !ok {
+			return
+		}
 
-	// O tipo do usuario decide qual menu aparece.
-	if tipo == "motorista" {
-		c.menuMotorista()
-	} else {
-		c.menuPassageiro()
+		if tipo == "motorista" {
+			c.menuMotorista()
+		} else {
+			c.menuPassageiro()
+		}
+
+		c.sair()
 	}
 }
 
-// endereco permite apontar para outro host, o que sera necessario no Docker:
-//
-//	VAIJUNTO_SERVIDOR=servidor:8080 go run ./cliente
+// sair avisa o servidor para esquecer o login desta conexao, assim a proxima
+// pessoa a entrar nao herda a sessao anterior.
+func (c *cliente) sair() {
+	if _, err := c.pedir(protocolo.Pedido{Acao: "sair"}); err != nil {
+		fmt.Println("conexao perdida:", err)
+	}
+}
+
 func endereco() string {
-	if v := os.Getenv("VAIJUNTO_SERVIDOR"); v != "" {
+	if v := os.Getenv("VAIJUNTO_SERVIDOR"); v != "" { //se existir variável de ambiente.
 		return v
 	}
 	return "localhost:8080"
 }
 
-// ---------------------------------------------------------------------------
-// Login
-// ---------------------------------------------------------------------------
-
-// entrada e a primeira tela: entrar com uma conta existente ou criar uma nova.
-// Devolve o tipo do usuario, que decide qual menu aparece depois.
 func (c *cliente) entrada() (string, bool) {
-	fmt.Println("=== Vaijunto ===")
-
 	for {
-		fmt.Println("\n1) entrar   2) criar conta   0) sair")
+		menu("VAIJUNTO",
+			"1) entrar",
+			"2) criar conta",
+			"0) sair")
 
 		switch c.opcao() {
 		case "1":
@@ -86,7 +88,6 @@ func (c *cliente) entrada() (string, bool) {
 	}
 }
 
-// entrar pede usuario e senha de uma conta que ja existe.
 func (c *cliente) entrar() (string, bool) {
 	usuario, ok := c.ler("usuario: ")
 	if !ok {
@@ -101,7 +102,6 @@ func (c *cliente) entrar() (string, bool) {
 	return c.autenticar(usuario, senha)
 }
 
-// criarConta registra um usuario novo e ja entra com ele.
 func (c *cliente) criarConta() (string, bool) {
 	usuario, ok := c.ler("novo usuario: ")
 	if !ok {
@@ -132,7 +132,7 @@ func (c *cliente) criarConta() (string, bool) {
 		return "", false
 	}
 
-	r, err := c.pedir(protocolo.Pedido{
+	r, err := c.pedir(protocolo.Pedido{ //pedido com ação (json e envia pro server)
 		Acao:    "registrar",
 		Usuario: usuario,
 		Senha:   senha,
@@ -144,7 +144,7 @@ func (c *cliente) criarConta() (string, bool) {
 	}
 
 	if !r.OK {
-		fmt.Println("  erro:", r.Erro)
+		fmt.Println("  erro:", r.Erro) //user ja existe
 		return "", false
 	}
 
@@ -171,19 +171,24 @@ func (c *cliente) autenticar(usuario, senha string) (string, bool) {
 	return r.Tipo, true
 }
 
-// ---------------------------------------------------------------------------
-// Menu do motorista
-// ---------------------------------------------------------------------------
-
 func (c *cliente) menuMotorista() {
 	for {
-		fmt.Println("\n1) cadastrar carona   2) minhas caronas   0) sair")
+		menu("MOTORISTA",
+			"1) cadastrar carona",
+			"2) minhas caronas",
+			"3) passageiros de uma carona",
+			"4) cancelar carona",
+			"0) voltar")
 
 		switch c.opcao() {
 		case "1":
 			c.cadastrarCarona()
 		case "2":
-			c.listar("minhas_caronas", "voce ainda nao tem caronas")
+			c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas")
+		case "3":
+			c.passageiros()
+		case "4":
+			c.cancelarCarona()
 		case "0", "":
 			return
 		default:
@@ -231,21 +236,57 @@ func (c *cliente) cadastrarCarona() {
 	}))
 }
 
-// ---------------------------------------------------------------------------
-// Menu do passageiro
-// ---------------------------------------------------------------------------
+// passageiros mostra quem esta em cada trecho de uma carona.
+func (c *cliente) passageiros() {
+	if !c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas") {
+		return
+	}
+
+	id, ok := c.lerNumero("numero da carona: ")
+	if !ok {
+		return
+	}
+
+	c.listar(protocolo.Pedido{Acao: "passageiros", CaronaID: id}, "carona sem dados")
+}
+
+func (c *cliente) cancelarCarona() {
+	if !c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas") {
+		return
+	}
+
+	id, ok := c.lerNumero("numero da carona: ")
+	if !ok {
+		return
+	}
+
+	resposta, ok := c.ler(fmt.Sprintf("cancelar a carona %d? as reservas dos passageiros serao desfeitas (s/n): ", id))
+	if !ok || strings.ToLower(resposta) != "s" {
+		fmt.Println("  nada foi cancelado")
+		return
+	}
+
+	c.mostrar(c.pedir(protocolo.Pedido{Acao: "cancelar_carona", CaronaID: id}))
+}
 
 func (c *cliente) menuPassageiro() {
 	for {
-		fmt.Println("\n1) buscar e reservar   2) minhas reservas   3) pagar   0) sair")
+		menu("PASSAGEIRO",
+			"1) buscar e reservar",
+			"2) minhas reservas",
+			"3) pagar reserva",
+			"4) cancelar reserva",
+			"0) voltar")
 
 		switch c.opcao() {
 		case "1":
 			c.buscarEReservar()
 		case "2":
-			c.listar("minhas_reservas", "voce ainda nao tem reservas")
+			c.listar(protocolo.Pedido{Acao: "minhas_reservas"}, "voce ainda nao tem reservas")
 		case "3":
 			c.pagar()
+		case "4":
+			c.cancelarReserva()
 		case "0", "":
 			return
 		default:
@@ -255,6 +296,11 @@ func (c *cliente) menuPassageiro() {
 }
 
 func (c *cliente) buscarEReservar() {
+	// Mostra o que existe antes, para o passageiro nao chutar cidade e data.
+	if !c.listar(protocolo.Pedido{Acao: "caronas"}, "nenhuma carona com vaga no momento") {
+		return
+	}
+
 	origem, ok := c.ler("origem: ")
 	if !ok {
 		return
@@ -291,9 +337,9 @@ func (c *cliente) buscarEReservar() {
 		return
 	}
 
-	// O servidor ja mandou o Resumo pronto: aqui so numeramos e imprimimos.
+	fmt.Println()
 	for i, o := range r.Opcoes {
-		fmt.Printf("  %d) %s | R$%d\n", i+1, o.Resumo, o.Preco)
+		item(fmt.Sprintf("%d) %s | total R$%d", i+1, o.Resumo, o.Preco))
 	}
 
 	escolha, ok := c.lerNumero("reservar qual? (0 cancela): ")
@@ -313,6 +359,10 @@ func (c *cliente) buscarEReservar() {
 }
 
 func (c *cliente) pagar() {
+	if !c.listar(protocolo.Pedido{Acao: "minhas_reservas"}, "voce ainda nao tem reservas") {
+		return
+	}
+
 	id, ok := c.lerNumero("numero da reserva: ")
 	if !ok {
 		return
@@ -321,12 +371,19 @@ func (c *cliente) pagar() {
 	c.mostrar(c.pedir(protocolo.Pedido{Acao: "pagar", ReservaID: id}))
 }
 
-// ---------------------------------------------------------------------------
-// Peças reaproveitadas
-// ---------------------------------------------------------------------------
+func (c *cliente) cancelarReserva() {
+	if !c.listar(protocolo.Pedido{Acao: "minhas_reservas"}, "voce ainda nao tem reservas") {
+		return
+	}
 
-// pedir envia um Pedido e espera a Resposta. Toda conversa com o servidor
-// passa por aqui.
+	id, ok := c.lerNumero("numero da reserva: ")
+	if !ok {
+		return
+	}
+
+	c.mostrar(c.pedir(protocolo.Pedido{Acao: "cancelar_reserva", ReservaID: id}))
+}
+
 func (c *cliente) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
 	if err := protocolo.EnviarPedido(c.conexao, p); err != nil {
 		return protocolo.Resposta{}, err
@@ -334,26 +391,47 @@ func (c *cliente) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
 	return protocolo.LerResposta(c.servidor)
 }
 
-// listar faz um pedido que devolve Linhas e imprime uma por uma.
-func (c *cliente) listar(acao, sePvazio string) {
-	r, err := c.pedir(protocolo.Pedido{Acao: acao})
+// listar imprime as linhas da resposta. Devolve true se havia algo para
+// mostrar, assim quem chamou sabe se vale a pena pedir um numero depois.
+func (c *cliente) listar(p protocolo.Pedido, seVazio string) bool {
+	r, err := c.pedir(p)
 	if err != nil {
 		fmt.Println("conexao perdida:", err)
-		return
+		return false
 	}
 
 	if !r.OK {
 		fmt.Println("  erro:", r.Erro)
-		return
+		return false
 	}
 
 	if len(r.Linhas) == 0 {
-		fmt.Println(" ", sePvazio)
+		fmt.Println(" ", seVazio)
+		return false
+	}
+
+	fmt.Println()
+	for _, linha := range r.Linhas {
+		item(linha)
+	}
+	return true
+}
+
+// item quebra uma linha "carona 1 | 2026-09-20 | Feira -> Ilheus" em lista:
+// o primeiro pedaco vira o titulo e o resto fica indentado embaixo.
+func item(linha string) {
+	// Linha que ja vem indentada e continuacao do item anterior (ex.: os
+	// trechos em "passageiros"): so alinha com os detalhes.
+	if strings.HasPrefix(linha, " ") {
+		fmt.Println("    " + linha)
 		return
 	}
 
-	for _, linha := range r.Linhas {
-		fmt.Println("  " + linha)
+	partes := strings.Split(linha, " | ")
+
+	fmt.Println("  " + partes[0])
+	for _, p := range partes[1:] {
+		fmt.Println("      " + p)
 	}
 }
 
@@ -370,6 +448,21 @@ func (c *cliente) mostrar(r protocolo.Resposta, err error) {
 	} else {
 		fmt.Println("  erro:", r.Erro)
 	}
+}
+
+// menu imprime um titulo emoldurado e as opcoes uma embaixo da outra.
+// "opcoes ...string" aceita quantas strings vierem, como uma lista.
+func menu(titulo string, opcoes ...string) {
+	linha := strings.Repeat("=", 32)
+
+	fmt.Println()
+	fmt.Println(linha)
+	fmt.Println("  " + titulo)
+	fmt.Println(linha)
+	for _, o := range opcoes {
+		fmt.Println("  " + o)
+	}
+	fmt.Println(linha)
 }
 
 func (c *cliente) opcao() string {

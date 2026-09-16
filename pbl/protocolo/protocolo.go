@@ -1,43 +1,33 @@
-// Package protocolo define as mensagens que cliente e servidor trocam.
-//
-// A regra do protocolo e simples: UMA LINHA DE TEXTO = UMA MENSAGEM, e o
-// conteudo da linha e um JSON. E isso que resolve o problema de o TCP nao ter
-// fronteira de mensagem: quem le sabe que a mensagem acabou quando acha o \n.
 package protocolo
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
 
-// Item e um pedaco de viagem: "na carona X, da cidade De ate a cidade Ate".
-// De e Ate sao INDICES dentro da Rota da carona, nao nomes de cidade.
+var ErrMensagemInvalida = errors.New("mensagem invalida") //json invalido
+
 type Item struct {
 	CaronaID int `json:"carona_id"`
 	De       int `json:"de"`
 	Ate      int `json:"ate"`
 }
 
-// Opcao e uma viagem possivel que o servidor oferece ao passageiro.
-//
-// O servidor ja monta o Resumo pronto para exibir. Assim o cliente nao precisa
-// conhecer a estrutura interna das caronas: ele so imprime o texto e devolve
-// os Itens da opcao escolhida.
+// padronizando structs client-server
 type Opcao struct {
 	Itens  []Item `json:"itens"`
 	Resumo string `json:"resumo"`
 	Preco  int    `json:"preco"`
 }
 
-// Pedido e o que o cliente manda para o servidor.
-// Cada acao usa so os campos que interessam a ela; o resto vai vazio.
 type Pedido struct {
 	Acao    string `json:"acao"`
 	Usuario string `json:"usuario,omitempty"`
 	Senha   string `json:"senha,omitempty"`
-	Tipo    string `json:"tipo,omitempty"` // registrar: motorista ou passageiro
+	Tipo    string `json:"tipo,omitempty"` // motorista ou passageiro
 
 	// cadastrar
 	Rota     []string `json:"rota,omitempty"`
@@ -52,7 +42,10 @@ type Pedido struct {
 	// reservar
 	Itens []Item `json:"itens,omitempty"`
 
-	// pagar
+	// passageiros, cancelar_carona
+	CaronaID int `json:"carona_id,omitempty"`
+
+	// pagar, cancelar_reserva
 	ReservaID int `json:"reserva_id,omitempty"`
 }
 
@@ -63,26 +56,26 @@ type Resposta struct {
 	Mensagem string `json:"mensagem,omitempty"`
 
 	Tipo      string   `json:"tipo,omitempty"`       // login
+	CaronaID  int      `json:"carona_id,omitempty"`  // cadastrar
 	Opcoes    []Opcao  `json:"opcoes,omitempty"`     // buscar
 	Linhas    []string `json:"linhas,omitempty"`     // listagens
 	ReservaID int      `json:"reserva_id,omitempty"` // reservar
 }
 
-// LerPedido le uma linha e transforma o JSON em Pedido.
+// recebe um leitor e devolve um pedido e um erro
 func LerPedido(leitor *bufio.Reader) (Pedido, error) {
-	linha, err := leitor.ReadString('\n')
+	linha, err := leitor.ReadString('\n') //le tudo ate achar um /n
 	if err != nil {
-		return Pedido{}, err
+		return Pedido{}, err //retorna o erro que ocorreu e um pedido vazio
 	}
 
-	var p Pedido
-	if err := json.Unmarshal([]byte(linha), &p); err != nil {
-		return Pedido{}, fmt.Errorf("pedido invalido: %w", err)
+	var p Pedido                                              //cria um pedido vazio
+	if err := json.Unmarshal([]byte(linha), &p); err != nil { //recebe o json, transforma em um pedido, unmarshal usa bytes.
+		return Pedido{}, fmt.Errorf("%w: %v", ErrMensagemInvalida, err) //se o json nao estiver no formato correto.
 	}
-	return p, nil
+	return p, nil //p preenchido e erro = nulo
 }
 
-// LerResposta le uma linha e transforma o JSON em Resposta.
 func LerResposta(leitor *bufio.Reader) (Resposta, error) {
 	linha, err := leitor.ReadString('\n')
 	if err != nil {
@@ -91,14 +84,14 @@ func LerResposta(leitor *bufio.Reader) (Resposta, error) {
 
 	var r Resposta
 	if err := json.Unmarshal([]byte(linha), &r); err != nil {
-		return Resposta{}, fmt.Errorf("resposta invalida: %w", err)
+		return Resposta{}, fmt.Errorf("%w: %v", ErrMensagemInvalida, err)
 	}
 	return r, nil
 }
 
 // EnviarPedido escreve o Pedido como uma linha de JSON.
 func EnviarPedido(destino io.Writer, p Pedido) error {
-	return enviar(destino, p)
+	return enviar(destino, p) //chama enviar
 }
 
 // EnviarResposta escreve a Resposta como uma linha de JSON.
@@ -106,10 +99,9 @@ func EnviarResposta(destino io.Writer, r Resposta) error {
 	return enviar(destino, r)
 }
 
-// enviar converte qualquer valor em JSON e escreve com o \n no fim.
-// E minuscula, entao so existe dentro deste pacote.
+// caminho contrario de ler.
 func enviar(destino io.Writer, valor any) error {
-	bytes, err := json.Marshal(valor)
+	bytes, err := json.Marshal(valor) //struck para json bytes
 	if err != nil {
 		return err
 	}

@@ -1,9 +1,3 @@
-// Package dados guarda o estado do sistema e as regras que mexem nele.
-//
-// REGRA DE OURO DESTE PACOTE: toda funcao publica (maiuscula) abre com
-// mu.Lock() e defer mu.Unlock(). Funcoes internas (minusculas) NUNCA travam,
-// porque sao chamadas de dentro das publicas -- se elas travassem tambem, o
-// programa congelaria (deadlock).
 package dados
 
 import (
@@ -18,8 +12,7 @@ import (
 	"vaijunto/protocolo"
 )
 
-// TempoDeReserva e quanto tempo a reserva fica de pe sem ser paga.
-// E variavel (nao constante) para os testes poderem encurtar isso.
+// 10 min de reserva.
 var TempoDeReserva = 10 * time.Minute
 
 // Usuario e quem usa o sistema. Tipo e "motorista" ou "passageiro".
@@ -29,14 +22,6 @@ type Usuario struct {
 	Tipo  string `json:"tipo"`
 }
 
-// Carona e uma viagem oferecida por um motorista.
-//
-// Rota e a sequencia de cidades: ["Feira", "Salvador", "Ilheus"].
-// Os TRECHOS sao os intervalos entre elas: Feira->Salvador e Salvador->Ilheus.
-// Uma rota com N cidades tem N-1 trechos.
-//
-// Ocupados tem um contador por trecho. E o coracao da modelagem: a
-// disponibilidade POR TRECHO sai naturalmente, sem estrutura extra.
 type Carona struct {
 	ID        int      `json:"id"`
 	Motorista string   `json:"motorista"`
@@ -44,7 +29,8 @@ type Carona struct {
 	Data      string   `json:"data"`
 	Assentos  int      `json:"assentos"` // total de assentos, igual em todo trecho
 	Preco     int      `json:"preco"`    // preco POR TRECHO
-	Ocupados  []int    `json:"ocupados"` // len = len(Rota)-1
+	Ocupados  []int    `json:"ocupados"` // ocupador por trecho
+	Cancelada bool     `json:"cancelada,omitempty"`
 }
 
 // Reserva e um pedido de assentos, que pode cobrir varias caronas.
@@ -52,22 +38,14 @@ type Reserva struct {
 	ID         int              `json:"id"`
 	Passageiro string           `json:"passageiro"`
 	Itens      []protocolo.Item `json:"itens"`
-	Estado     string           `json:"estado"` // "pendente" | "paga" | "expirada"
+	Estado     string           `json:"estado"` // "pendente" | "paga" | "expirada" | "cancelada"
+	Motivo     string           `json:"motivo,omitempty"`
 	Expira     time.Time        `json:"expira"`
 }
 
-// Banco guarda TODO o estado do sistema em memoria.
-//
-// O mutex protege tudo que esta declarado abaixo dele. Como varias goroutines
-// (uma por cliente conectado) mexem neste mesmo Banco, sem o mutex duas
-// compras simultaneas poderiam ler o mesmo assento livre e vende-lo duas vezes.
-//
-// "mu" e "arquivo" comecam com minuscula, entao o encoding/json os ignora --
-// e o que queremos: nem a fechadura nem o caminho do arquivo fazem parte dos
-// dados salvos.
-type Banco struct {
-	mu      sync.Mutex
-	arquivo string
+type Banco struct { //estado do sistema em memória
+	mu      sync.Mutex // lock e unlock para entrar na goroutine
+	arquivo string     //caminho do arquivo de persistência
 
 	Usuarios map[string]Usuario `json:"usuarios"`
 	Caronas  []Carona           `json:"caronas"`
@@ -75,32 +53,19 @@ type Banco struct {
 	ProxID   int                `json:"prox_id"`
 }
 
-// NovoBanco cria o banco ja com usuarios de teste, sem persistencia.
-//
-// Devolve PONTEIRO (*Banco), nunca valor. Um sync.Mutex nao pode ser copiado:
-// cada copia teria a sua propria fechadura, e proteger uma copia nao protegeria
-// as outras. O proprio "go vet" reclama se voce tentar copiar.
+// cria um banco novo
 func NovoBanco() *Banco {
 	return &Banco{
-		Usuarios: map[string]Usuario{
-			"ana":   {Login: "ana", Senha: "123", Tipo: "motorista"},
-			"davi":  {Login: "davi", Senha: "123", Tipo: "motorista"},
-			"bruno": {Login: "bruno", Senha: "123", Tipo: "passageiro"},
-			"carla": {Login: "carla", Senha: "123", Tipo: "passageiro"},
-		},
-		ProxID: 1,
+		Usuarios: map[string]Usuario{},
+		ProxID:   1,
 	}
 }
 
-// Carregar le o banco de um arquivo JSON. Se o arquivo nao existir (primeira
-// execucao), comeca do zero. A partir daqui toda alteracao e gravada sozinha.
-//
-// O enunciado proibe SGBD mas permite JSON: e exatamente isto.
 func Carregar(caminho string) *Banco {
-	b := NovoBanco()
-	b.arquivo = caminho
+	b := NovoBanco()    //cria um banco novo
+	b.arquivo = caminho //tenta recuperar os dados do arquivo
 
-	conteudo, err := os.ReadFile(caminho)
+	conteudo, err := os.ReadFile(caminho) //le o arquivo
 	if err != nil {
 		fmt.Printf("sem dados anteriores em %s, comecando do zero\n", caminho)
 		return b
@@ -123,16 +88,11 @@ func NovoBancoEm(caminho string) *Banco {
 	return b
 }
 
-// ---------------------------------------------------------------------------
-// Funcoes publicas: TODAS travam o mutex
-// ---------------------------------------------------------------------------
-
-// Autenticar confere login e senha. O segundo retorno diz se deu certo.
 func (b *Banco) Autenticar(login, senha string) (Usuario, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.Lock()         //trava o banco
+	defer b.mu.Unlock() //garante que abre no fim da função
 
-	u, existe := b.Usuarios[login]
+	u, existe := b.Usuarios[login] //procura o user no mapa
 	if !existe {
 		return Usuario{}, false
 	}
@@ -144,13 +104,7 @@ func (b *Banco) Autenticar(login, senha string) (Usuario, bool) {
 	return u, true
 }
 
-// CadastrarUsuario cria uma conta nova.
-//
-// Repare que a checagem "ja existe" e a escrita no mapa acontecem DENTRO do
-// mesmo Lock. Se a checagem ficasse fora, duas pessoas registrando o mesmo
-// login ao mesmo tempo passariam as duas pela verificacao antes de qualquer
-// uma escrever -- e a segunda sobrescreveria a primeira. E o mesmo raciocinio
-// das duas fases do Reservar.
+// banco chama cadastrar
 func (b *Banco) CadastrarUsuario(login, senha, tipo string) error {
 	login = strings.TrimSpace(login)
 
@@ -164,23 +118,22 @@ func (b *Banco) CadastrarUsuario(login, senha, tipo string) error {
 		return errors.New(`o tipo precisa ser "motorista" ou "passageiro"`)
 	}
 
+	//apos conferir formato, trava o banco
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if _, existe := b.Usuarios[login]; existe {
+	if _, existe := b.Usuarios[login]; existe { //confere se o usuário já existe
 		return fmt.Errorf("o usuario %q ja existe", login)
 	}
 
-	b.Usuarios[login] = Usuario{Login: login, Senha: senha, Tipo: tipo}
-	b.persistir()
+	b.Usuarios[login] = Usuario{Login: login, Senha: senha, Tipo: tipo} //coloca no dicionario com a chave login
+	b.persistir()                                                       //banco inteiro em json
 
 	return nil
 }
 
-// CadastrarCarona registra uma carona nova e devolve o ID dela.
 func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, assentos, preco int) (int, error) {
-	// A validacao vem ANTES do Lock: nao faz sentido segurar a fechadura
-	// (e travar todos os outros clientes) para conferir argumento.
 	if len(rota) < 2 {
 		return 0, errors.New("a rota precisa de pelo menos 2 cidades")
 	}
@@ -191,6 +144,7 @@ func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, as
 		return 0, errors.New("informe a data")
 	}
 
+	//apos conferir necessidades, trava o banco
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -201,18 +155,17 @@ func (b *Banco) CadastrarCarona(motorista string, rota []string, data string, as
 		Data:      data,
 		Assentos:  assentos,
 		Preco:     preco,
-		Ocupados:  make([]int, len(rota)-1), // um contador por trecho, zerado
+		Ocupados:  make([]int, len(rota)-1), // Um contador por trecho, zerado
 	}
 
+	//cria carona e coloca no banco
 	b.ProxID++
 	b.Caronas = append(b.Caronas, c)
-	b.persistir()
+	b.persistir() //persiste banco
 
 	return c.ID, nil
 }
 
-// Buscar devolve as opcoes de viagem de origem ate destino naquela data.
-// Primeiro as caronas diretas, depois as que exigem UMA baldeacao.
 func (b *Banco) Buscar(origem, destino, data string) []protocolo.Opcao {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -221,17 +174,6 @@ func (b *Banco) Buscar(origem, destino, data string) []protocolo.Opcao {
 	return append(opcoes, b.buscarComConexao(origem, destino, data)...)
 }
 
-// Reservar segura assentos em uma ou mais caronas, de forma ATOMICA.
-//
-// Esta e a funcao mais importante do projeto. O enunciado exige que, se o
-// passageiro pegar um trecho, ele nao fique sem o outro. A garantia vem de
-// duas fases dentro de UM UNICO Lock:
-//
-//	FASE 1 confere TODOS os itens sem alterar nada.
-//	FASE 2 so roda se a fase 1 passou inteira.
-//
-// Como nada solta o mutex entre as duas, nenhuma outra goroutine consegue se
-// intrometer no meio e roubar um assento que acabamos de conferir.
 func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error) {
 	if len(itens) == 0 {
 		return 0, errors.New("nenhum trecho escolhido")
@@ -240,21 +182,23 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// ---- FASE 1: verificacao. NAO altera nada. ----
 	for _, item := range itens {
 		c := b.acharCarona(item.CaronaID)
 		if c == nil {
-			return 0, fmt.Errorf("carona %d nao existe", item.CaronaID)
+			return 0, fmt.Errorf("carona %d nao existe", item.CaronaID) //se carona existe.
+		}
+		if c.Cancelada {
+			return 0, fmt.Errorf("carona %d foi cancelada", item.CaronaID) //se cancelada
 		}
 		if item.De < 0 || item.Ate > c.trechos() || item.De >= item.Ate {
 			return 0, fmt.Errorf("trecho invalido na carona %d", item.CaronaID)
 		}
 		if c.livres(item.De, item.Ate) < 1 {
-			return 0, fmt.Errorf("sem assento livre na carona %d", item.CaronaID)
+			return 0, fmt.Errorf("sem assento livre na carona %d", item.CaronaID) //se tem assento livre.
 		}
 	}
 
-	// ---- FASE 2: aplicacao. So chega aqui se TUDO passou. ----
+	//se tudo ok: reserva
 	for _, item := range itens {
 		b.acharCarona(item.CaronaID).ocupar(item.De, item.Ate)
 	}
@@ -274,8 +218,37 @@ func (b *Banco) Reservar(passageiro string, itens []protocolo.Item) (int, error)
 	return r.ID, nil
 }
 
-// Pagar confirma uma reserva pendente. Reserva paga nunca mais expira.
 func (b *Banco) Pagar(passageiro string, reservaID int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	r := b.acharReserva(reservaID)
+
+	//confere se a reserva é sua e se existe.
+	if r == nil {
+		return fmt.Errorf("reserva %d nao existe", reservaID)
+	}
+	if r.Passageiro != passageiro {
+		return errors.New("esta reserva nao e sua")
+	}
+
+	//confere o estado, so pode ser paga se estiver pendente.
+	switch r.Estado {
+	case "paga":
+		return errors.New("esta reserva ja foi paga")
+	case "expirada":
+		return errors.New("esta reserva expirou; os assentos voltaram para a fila")
+	case "cancelada":
+		return fmt.Errorf("esta reserva foi cancelada (%s)", r.Motivo)
+	}
+
+	r.Estado = "paga"
+	b.persistir()
+
+	return nil
+}
+
+func (b *Banco) CancelarReserva(passageiro string, reservaID int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -286,23 +259,52 @@ func (b *Banco) Pagar(passageiro string, reservaID int) error {
 	if r.Passageiro != passageiro {
 		return errors.New("esta reserva nao e sua")
 	}
-
-	switch r.Estado {
-	case "paga":
-		return errors.New("esta reserva ja foi paga")
-	case "expirada":
-		return errors.New("esta reserva expirou; os assentos voltaram para a fila")
+	if !r.ativa() {
+		return fmt.Errorf("esta reserva ja esta %s", r.Estado)
 	}
 
-	r.Estado = "paga"
+	//cancela reserva pelo passageiro
+	b.cancelar(r, "cancelada pelo passageiro")
 	b.persistir()
 
 	return nil
 }
 
-// ExpirarVencidas devolve os assentos das reservas pendentes que passaram do
-// prazo. Roda periodicamente numa goroutine do servidor. Devolve quantas
-// reservas foram expiradas.
+func (b *Banco) CancelarCarona(motorista string, caronaID int) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	c := b.acharCarona(caronaID)
+	if c == nil {
+		return 0, fmt.Errorf("carona %d nao existe", caronaID)
+	}
+	if c.Motorista != motorista {
+		return 0, errors.New("esta carona nao e sua")
+	}
+	if c.Cancelada {
+		return 0, errors.New("esta carona ja foi cancelada")
+	}
+
+	//true para carona cancelada
+	c.Cancelada = true
+
+	motivo := fmt.Sprintf("carona %d cancelada pelo motorista", caronaID)
+	afetadas := 0
+
+	//percorre todas as reservas e ve quais possuem o mesmo ID para cancelar
+	for i := range b.Reservas {
+		r := &b.Reservas[i]
+		if r.ativa() && r.usa(caronaID) {
+			b.cancelar(r, motivo)
+			afetadas++
+		}
+	}
+
+	b.persistir()
+
+	return afetadas, nil
+}
+
 func (b *Banco) ExpirarVencidas() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -310,21 +312,14 @@ func (b *Banco) ExpirarVencidas() int {
 	agora := time.Now()
 	expiradas := 0
 
-	for i := range b.Reservas {
-		// Ponteiro para o elemento REAL do slice. Com "for _, r := range"
-		// mexeriamos numa copia e o estado nunca mudaria.
+	for i := range b.Reservas { //goroutine verificando isso a cada 30s
 		r := &b.Reservas[i]
 
 		if r.Estado != "pendente" || agora.Before(r.Expira) {
 			continue
 		}
 
-		for _, item := range r.Itens {
-			if c := b.acharCarona(item.CaronaID); c != nil {
-				c.liberar(item.De, item.Ate)
-			}
-		}
-
+		b.devolverAssentos(r)
 		r.Estado = "expirada"
 		expiradas++
 	}
@@ -336,7 +331,6 @@ func (b *Banco) ExpirarVencidas() int {
 	return expiradas
 }
 
-// MinhasCaronas lista as caronas de um motorista, prontas para exibir.
 func (b *Banco) MinhasCaronas(motorista string) []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -345,16 +339,70 @@ func (b *Banco) MinhasCaronas(motorista string) []string {
 
 	for _, c := range b.Caronas {
 		if c.Motorista != motorista {
-			continue
+			continue //procura o motorista, motorista com mesmo nome pode dar problema.
 		}
-		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | ocupados por trecho: %v de %d",
-			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Ocupados, c.Assentos))
+
+		situacao := ""
+		if c.Cancelada {
+			situacao = " | CANCELADA"
+		}
+
+		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | ocupados por trecho: %v de %d%s",
+			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Ocupados, c.Assentos, situacao))
 	}
 
 	return linhas
 }
 
-// MinhasReservas lista as reservas de um passageiro, prontas para exibir.
+func (b *Banco) PassageirosDaCarona(motorista string, caronaID int) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	c := b.acharCarona(caronaID)
+	if c == nil {
+		return nil, fmt.Errorf("carona %d nao existe", caronaID)
+	}
+	if c.Motorista != motorista {
+		return nil, errors.New("esta carona nao e sua")
+	}
+
+	//verifica se existe e se é dele.
+
+	situacao := ""
+	if c.Cancelada {
+		situacao = " | CANCELADA"
+	}
+
+	linhas := []string{fmt.Sprintf("carona %d | %s | %s%s",
+		c.ID, c.Data, strings.Join(c.Rota, " -> "), situacao)}
+
+	// Para cada trecho, procura as reservas ativas cujo caminho passa por ele.
+	for t := 0; t < c.trechos(); t++ {
+		var nomes []string
+
+		for _, r := range b.Reservas {
+			if !r.ativa() {
+				continue
+			}
+			for _, item := range r.Itens {
+				if item.CaronaID == caronaID && item.De <= t && t < item.Ate {
+					nomes = append(nomes, fmt.Sprintf("%s (%s)", r.Passageiro, r.Estado))
+				}
+			}
+		}
+
+		lista := "ninguem"
+		if len(nomes) > 0 {
+			lista = strings.Join(nomes, ", ")
+		}
+
+		linhas = append(linhas, fmt.Sprintf("  %s -> %s [%d/%d]: %s",
+			c.Rota[t], c.Rota[t+1], c.Ocupados[t], c.Assentos, lista))
+	}
+
+	return linhas, nil
+}
+
 func (b *Banco) MinhasReservas(passageiro string) []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -367,36 +415,73 @@ func (b *Banco) MinhasReservas(passageiro string) []string {
 		}
 
 		detalhe := ""
-		if r.Estado == "pendente" {
+		switch {
+		case r.Estado == "pendente":
 			detalhe = fmt.Sprintf(" | expira em %s", time.Until(r.Expira).Round(time.Second))
+		case r.Motivo != "":
+			detalhe = " | " + r.Motivo
 		}
 
-		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %d trecho(s)%s",
-			r.ID, r.Estado, len(r.Itens), detalhe))
+		// Monta o caminho de cada item, para o passageiro saber que reserva e essa.
+		var caminho []string
+		for _, item := range r.Itens {
+			if c := b.acharCarona(item.CaronaID); c != nil {
+				caminho = append(caminho, fmt.Sprintf("%s -> %s (carona %d, %s)",
+					c.Rota[item.De], c.Rota[item.Ate], c.ID, c.Data))
+			}
+		}
+
+		linhas = append(linhas, fmt.Sprintf("reserva %d | %s | %s%s",
+			r.ID, r.Estado, strings.Join(caminho, " + "), detalhe))
 	}
 
 	return linhas
 }
 
-// ---------------------------------------------------------------------------
-// Funcoes internas: NENHUMA trava. Sao chamadas de dentro das publicas,
-// que ja estao segurando o mutex.
-// ---------------------------------------------------------------------------
+// CaronasDisponiveis lista as caronas nao canceladas que ainda tem vaga em
+// algum trecho. Serve para o passageiro saber quais cidades e datas existem
+// antes de buscar.
+func (b *Banco) CaronasDisponiveis() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-// buscarDiretas acha caronas que sozinhas levam de origem ate destino.
+	var linhas []string
+
+	for _, c := range b.Caronas {
+		if c.Cancelada {
+			continue
+		}
+
+		// Tem vaga se pelo menos um trecho nao esta lotado.
+		temVaga := false
+		for t := 0; t < c.trechos(); t++ {
+			if c.livres(t, t+1) > 0 {
+				temVaga = true
+				break
+			}
+		}
+		if !temVaga {
+			continue
+		}
+
+		linhas = append(linhas, fmt.Sprintf("carona %d | %s | %s | R$%d/trecho | motorista %s",
+			c.ID, c.Data, strings.Join(c.Rota, " -> "), c.Preco, c.Motorista))
+	}
+
+	return linhas
+}
+
 func (b *Banco) buscarDiretas(origem, destino, data string) []protocolo.Opcao {
 	var opcoes []protocolo.Opcao
 
 	for _, c := range b.Caronas {
-		if c.Data != data {
+		if c.Cancelada || c.Data != data { //pula canceladas ou de outra data
 			continue
 		}
 
 		de := c.indice(origem)
 		ate := c.indice(destino)
 
-		// As duas cidades precisam estar na rota, e a origem precisa vir
-		// ANTES do destino: a carona so anda em um sentido.
 		if de == -1 || ate == -1 || de >= ate {
 			continue
 		}
@@ -408,25 +493,22 @@ func (b *Banco) buscarDiretas(origem, destino, data string) []protocolo.Opcao {
 
 		opcoes = append(opcoes, protocolo.Opcao{
 			Itens: []protocolo.Item{{CaronaID: c.ID, De: de, Ate: ate}},
-			Preco: c.Preco * (ate - de),
+			Preco: c.Preco * (ate - de), //preço por trecho * numero de trechos.
 			Resumo: fmt.Sprintf("direto: carona %d (%s) %s | %d livre(s)",
-				c.ID, c.Motorista, strings.Join(c.Rota[de:ate+1], " -> "), livres),
+				c.ID, c.Motorista, strings.Join(c.Rota[de:ate+1], " -> "), livres), //pega só o trecho relevante
 		})
 	}
 
 	return opcoes
 }
 
-// buscarComConexao acha pares de caronas que, juntas, levam de origem ate
-// destino trocando de veiculo numa cidade do meio.
-//
-// E aqui que a atomicidade do Reservar ganha sentido: uma opcao destas tem
-// DOIS itens, e nao adianta conseguir o primeiro e perder o segundo.
+//ver melhor essas funções de buscar
+
 func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao {
 	var opcoes []protocolo.Opcao
 
 	for _, primeira := range b.Caronas {
-		if primeira.Data != data {
+		if primeira.Cancelada || primeira.Data != data {
 			continue
 		}
 
@@ -435,12 +517,9 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 			continue
 		}
 
-		// Testa cada cidade depois da origem como ponto de baldeacao.
 		for meio := de + 1; meio < len(primeira.Rota); meio++ {
 			baldeacao := primeira.Rota[meio]
 
-			// Se a primeira carona ja chega no destino, isso e viagem direta:
-			// a outra funcao ja cuidou disso.
 			if baldeacao == destino {
 				continue
 			}
@@ -449,7 +528,7 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 			}
 
 			for _, segunda := range b.Caronas {
-				if segunda.ID == primeira.ID || segunda.Data != data {
+				if segunda.ID == primeira.ID || segunda.Cancelada || segunda.Data != data {
 					continue
 				}
 
@@ -478,35 +557,41 @@ func (b *Banco) buscarComConexao(origem, destino, data string) []protocolo.Opcao
 	return opcoes
 }
 
-// persistir grava o banco no arquivo. Se nao houver arquivo configurado
-// (como nos testes), nao faz nada.
-//
-// Nao trava: quem chama ja esta com o mutex na mao. Gravar aqui dentro
-// garante que o arquivo nunca pega o estado pela metade.
+// cancelar desfaz uma reserva ativa: devolve os assentos e registra o motivo.
+func (b *Banco) cancelar(r *Reserva, motivo string) {
+	b.devolverAssentos(r)
+	r.Estado = "cancelada"
+	r.Motivo = motivo
+}
+
+// devolverAssentos libera um assento em cada trecho de cada item da reserva.
+func (b *Banco) devolverAssentos(r *Reserva) {
+	for _, item := range r.Itens {
+		if c := b.acharCarona(item.CaronaID); c != nil {
+			c.liberar(item.De, item.Ate)
+		}
+	}
+}
+
 func (b *Banco) persistir() {
 	if b.arquivo == "" {
 		return
 	}
 
-	conteudo, err := json.MarshalIndent(b, "", "  ")
+	conteudo, err := json.MarshalIndent(b, "", "  ") //converte o banco em json
 	if err != nil {
 		fmt.Println("erro ao converter os dados:", err)
 		return
 	}
 
-	if err := os.WriteFile(b.arquivo, conteudo, 0o644); err != nil {
+	if err := os.WriteFile(b.arquivo, conteudo, 0o644); err != nil { //útil no linux
 		fmt.Println("erro ao gravar", b.arquivo, ":", err)
 	}
 }
 
-// acharCarona devolve um PONTEIRO para a carona dentro do slice.
-//
-// Repare no "for i := range" em vez de "for _, c := range": o range por valor
-// entrega uma COPIA de cada carona, e alterar a copia nao mudaria nada. Para
-// modificar o elemento de verdade e preciso pegar o endereco dele.
 func (b *Banco) acharCarona(id int) *Carona {
 	for i := range b.Caronas {
-		if b.Caronas[i].ID == id {
+		if b.Caronas[i].ID == id { //percorre as caronas pelo id, se achar retorna a carona
 			return &b.Caronas[i]
 		}
 	}
@@ -516,13 +601,28 @@ func (b *Banco) acharCarona(id int) *Carona {
 func (b *Banco) acharReserva(id int) *Reserva {
 	for i := range b.Reservas {
 		if b.Reservas[i].ID == id {
-			return &b.Reservas[i]
+			return &b.Reservas[i] //mesma coisa da achar carona
 		}
 	}
 	return nil
 }
 
-// trechos diz quantos trechos a carona tem: uma cidade a menos que a rota.
+// ativa para segurar os assentos
+func (r Reserva) ativa() bool {
+	return r.Estado == "pendente" || r.Estado == "paga"
+}
+
+// a reserva usa a carona certa?
+func (r Reserva) usa(caronaID int) bool {
+	for _, item := range r.Itens {
+		if item.CaronaID == caronaID {
+			return true
+		}
+	}
+	return false
+}
+
+// retorna qtd de trechos
 func (c Carona) trechos() int {
 	return len(c.Rota) - 1
 }
@@ -537,11 +637,7 @@ func (c Carona) indice(cidade string) int {
 	return -1
 }
 
-// livres diz quantos assentos estao livres em TODO o caminho de "de" ate "ate".
-//
-// Viajar da cidade "de" ate a cidade "ate" usa os trechos de, de+1, ..., ate-1.
-// O passageiro precisa do mesmo assento no caminho inteiro, entao o que vale e
-// o trecho MAIS CHEIO: e ele que limita.
+// para verificar qual trecho tem menos vagas (se for 0 lock)
 func (c Carona) livres(de, ate int) int {
 	menor := c.Assentos
 

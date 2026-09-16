@@ -112,18 +112,28 @@ func atender(conexao net.Conn, banco *dados.Banco) {
 
 	for {
 		pedido, err := protocolo.LerPedido(leitor)
+
+		// A linha chegou inteira, mas nao e JSON valido: o problema e da
+		// mensagem, nao da conexao. Avisa o cliente e continua atendendo.
+		if errors.Is(err, protocolo.ErrMensagemInvalida) {
+			protocolo.EnviarResposta(conexao, protocolo.Resposta{OK: false, Erro: err.Error()})
+			continue
+		}
+
+		// Qualquer OUTRO erro e da conexao: o cliente fechou (EOF), caiu de
+		// forma abrupta (connection reset) ou a rede sumiu. Em todos os casos
+		// nao ha mais ninguem do outro lado, entao a goroutine precisa acabar.
+		//
+		// Uma versao anterior so encerrava no EOF e tratava o resto como JSON
+		// ruim: numa queda abrupta, voltava a ler, recebia o mesmo erro na hora
+		// e girava para sempre a 100% de um nucleo.
 		if err != nil {
-			// EOF significa que o cliente fechou a conexao: encerra a goroutine.
 			if errors.Is(err, io.EOF) {
 				fmt.Println("cliente desconectou:", conexao.RemoteAddr())
-				return
+			} else {
+				fmt.Printf("conexao com %v caiu: %v\n", conexao.RemoteAddr(), err)
 			}
-			// Qualquer outro erro e JSON malformado: avisa e continua ouvindo.
-			protocolo.EnviarResposta(conexao, protocolo.Resposta{
-				OK:   false,
-				Erro: err.Error(),
-			})
-			continue
+			return
 		}
 
 		fmt.Printf("recebido de %v: acao=%q\n", conexao.RemoteAddr(), pedido.Acao)
@@ -179,6 +189,8 @@ func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Respo
 		s.usuario = dados.Usuario{}
 		return protocolo.Resposta{OK: true, Mensagem: "sessao encerrada"}
 
+	// ---- acoes do motorista ----
+
 	case "cadastrar":
 		if s.usuario.Tipo != "motorista" {
 			return erro("so motorista cadastra carona")
@@ -190,11 +202,43 @@ func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Respo
 		}
 		return protocolo.Resposta{
 			OK:       true,
+			CaronaID: id,
 			Mensagem: fmt.Sprintf("carona %d cadastrada", id),
 		}
 
 	case "minhas_caronas":
 		return protocolo.Resposta{OK: true, Linhas: banco.MinhasCaronas(s.usuario.Login)}
+
+	case "passageiros":
+		if s.usuario.Tipo != "motorista" {
+			return erro("so motorista ve os passageiros de uma carona")
+		}
+
+		linhas, err := banco.PassageirosDaCarona(s.usuario.Login, p.CaronaID)
+		if err != nil {
+			return erro(err.Error())
+		}
+		return protocolo.Resposta{OK: true, Linhas: linhas}
+
+	case "cancelar_carona":
+		if s.usuario.Tipo != "motorista" {
+			return erro("so motorista cancela carona")
+		}
+
+		afetadas, err := banco.CancelarCarona(s.usuario.Login, p.CaronaID)
+		if err != nil {
+			return erro(err.Error())
+		}
+		return protocolo.Resposta{
+			OK: true,
+			Mensagem: fmt.Sprintf("carona %d cancelada; %d reserva(s) desfeita(s) e assentos devolvidos",
+				p.CaronaID, afetadas),
+		}
+
+	// ---- acoes do passageiro ----
+
+	case "caronas":
+		return protocolo.Resposta{OK: true, Linhas: banco.CaronasDisponiveis()}
 
 	case "buscar":
 		opcoes := banco.Buscar(p.Origem, p.Destino, p.Data)
@@ -223,6 +267,15 @@ func executar(p protocolo.Pedido, s *sessao, banco *dados.Banco) protocolo.Respo
 		return protocolo.Resposta{
 			OK:       true,
 			Mensagem: fmt.Sprintf("reserva %d paga; assentos confirmados", p.ReservaID),
+		}
+
+	case "cancelar_reserva":
+		if err := banco.CancelarReserva(s.usuario.Login, p.ReservaID); err != nil {
+			return erro(err.Error())
+		}
+		return protocolo.Resposta{
+			OK:       true,
+			Mensagem: fmt.Sprintf("reserva %d cancelada; assentos devolvidos", p.ReservaID),
 		}
 
 	case "minhas_reservas":

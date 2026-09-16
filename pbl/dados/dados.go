@@ -1,9 +1,3 @@
-// Package dados guarda o estado do sistema e as regras que mexem nele.
-//
-// REGRA DE OURO DESTE PACOTE: toda funcao publica (maiuscula) abre com
-// mu.Lock() e defer mu.Unlock(). Funcoes internas (minusculas) NUNCA travam,
-// porque sao chamadas de dentro das publicas -- se elas travassem tambem, o
-// programa congelaria (deadlock).
 package dados
 
 import (
@@ -18,8 +12,7 @@ import (
 	"vaijunto/protocolo"
 )
 
-// TempoDeReserva e quanto tempo a reserva fica de pe sem ser paga.
-// E variavel (nao constante) para os testes poderem encurtar isso.
+// 10 min de reserva.
 var TempoDeReserva = 10 * time.Minute
 
 // Usuario e quem usa o sistema. Tipo e "motorista" ou "passageiro".
@@ -29,14 +22,6 @@ type Usuario struct {
 	Tipo  string `json:"tipo"`
 }
 
-// Carona e uma viagem oferecida por um motorista.
-//
-// Rota e a sequencia de cidades: ["Feira", "Salvador", "Ilheus"].
-// Os TRECHOS sao os intervalos entre elas: Feira->Salvador e Salvador->Ilheus.
-// Uma rota com N cidades tem N-1 trechos.
-//
-// Ocupados tem um contador por trecho. E o coracao da modelagem: a
-// disponibilidade POR TRECHO sai naturalmente, sem estrutura extra.
 type Carona struct {
 	ID        int      `json:"id"`
 	Motorista string   `json:"motorista"`
@@ -44,7 +29,7 @@ type Carona struct {
 	Data      string   `json:"data"`
 	Assentos  int      `json:"assentos"` // total de assentos, igual em todo trecho
 	Preco     int      `json:"preco"`    // preco POR TRECHO
-	Ocupados  []int    `json:"ocupados"` // len = len(Rota)-1
+	Ocupados  []int    `json:"ocupados"` // ocupador por trecho
 	Cancelada bool     `json:"cancelada,omitempty"`
 }
 
@@ -58,18 +43,9 @@ type Reserva struct {
 	Expira     time.Time        `json:"expira"`
 }
 
-// Banco guarda TODO o estado do sistema em memoria.
-//
-// O mutex protege tudo que esta declarado abaixo dele. Como varias goroutines
-// (uma por cliente conectado) mexem neste mesmo Banco, sem o mutex duas
-// compras simultaneas poderiam ler o mesmo assento livre e vende-lo duas vezes.
-//
-// "mu" e "arquivo" comecam com minuscula, entao o encoding/json os ignora --
-// e o que queremos: nem a fechadura nem o caminho do arquivo fazem parte dos
-// dados salvos.
-type Banco struct {
-	mu      sync.Mutex
-	arquivo string
+type Banco struct { //estado do sistema em memória
+	mu      sync.Mutex // lock e unlock para entrar na goroutine
+	arquivo string     //caminho do arquivo de persistência
 
 	Usuarios map[string]Usuario `json:"usuarios"`
 	Caronas  []Carona           `json:"caronas"`
@@ -77,32 +53,19 @@ type Banco struct {
 	ProxID   int                `json:"prox_id"`
 }
 
-// NovoBanco cria o banco ja com usuarios de teste, sem persistencia.
-//
-// Devolve PONTEIRO (*Banco), nunca valor. Um sync.Mutex nao pode ser copiado:
-// cada copia teria a sua propria fechadura, e proteger uma copia nao protegeria
-// as outras. O proprio "go vet" reclama se voce tentar copiar.
+// cria um banco novo
 func NovoBanco() *Banco {
 	return &Banco{
-		Usuarios: map[string]Usuario{
-			"ana":   {Login: "ana", Senha: "123", Tipo: "motorista"},
-			"davi":  {Login: "davi", Senha: "123", Tipo: "motorista"},
-			"bruno": {Login: "bruno", Senha: "123", Tipo: "passageiro"},
-			"carla": {Login: "carla", Senha: "123", Tipo: "passageiro"},
-		},
-		ProxID: 1,
+		Usuarios: map[string]Usuario{},
+		ProxID:   1,
 	}
 }
 
-// Carregar le o banco de um arquivo JSON. Se o arquivo nao existir (primeira
-// execucao), comeca do zero. A partir daqui toda alteracao e gravada sozinha.
-//
-// O enunciado proibe SGBD mas permite JSON: e exatamente isto.
 func Carregar(caminho string) *Banco {
-	b := NovoBanco()
-	b.arquivo = caminho
+	b := NovoBanco()    //cria um banco novo
+	b.arquivo = caminho //tenta recuperar os dados do arquivo
 
-	conteudo, err := os.ReadFile(caminho)
+	conteudo, err := os.ReadFile(caminho) //le o arquivo
 	if err != nil {
 		fmt.Printf("sem dados anteriores em %s, comecando do zero\n", caminho)
 		return b
@@ -125,16 +88,11 @@ func NovoBancoEm(caminho string) *Banco {
 	return b
 }
 
-// ---------------------------------------------------------------------------
-// Funcoes publicas: TODAS travam o mutex
-// ---------------------------------------------------------------------------
-
-// Autenticar confere login e senha. O segundo retorno diz se deu certo.
 func (b *Banco) Autenticar(login, senha string) (Usuario, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.Lock()         //trava o banco
+	defer b.mu.Unlock() //garante que abre no fim da função
 
-	u, existe := b.Usuarios[login]
+	u, existe := b.Usuarios[login] //procura o user no mapa
 	if !existe {
 		return Usuario{}, false
 	}
@@ -146,13 +104,7 @@ func (b *Banco) Autenticar(login, senha string) (Usuario, bool) {
 	return u, true
 }
 
-// CadastrarUsuario cria uma conta nova.
-//
-// Repare que a checagem "ja existe" e a escrita no mapa acontecem DENTRO do
-// mesmo Lock. Se a checagem ficasse fora, duas pessoas registrando o mesmo
-// login ao mesmo tempo passariam as duas pela verificacao antes de qualquer
-// uma escrever -- e a segunda sobrescreveria a primeira. E o mesmo raciocinio
-// das duas fases do Reservar.
+// banco chama cadastrar
 func (b *Banco) CadastrarUsuario(login, senha, tipo string) error {
 	login = strings.TrimSpace(login)
 
@@ -166,14 +118,16 @@ func (b *Banco) CadastrarUsuario(login, senha, tipo string) error {
 		return errors.New(`o tipo precisa ser "motorista" ou "passageiro"`)
 	}
 
+	//apos conferir formato, trava o banco
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if _, existe := b.Usuarios[login]; existe {
+	if _, existe := b.Usuarios[login]; existe { //confere se o usuário já existe
 		return fmt.Errorf("o usuario %q ja existe", login)
 	}
 
-	b.Usuarios[login] = Usuario{Login: login, Senha: senha, Tipo: tipo}
+	b.Usuarios[login] = Usuario{Login: login, Senha: senha, Tipo: tipo} //coloca no dicionario com a chave login
 	b.persistir()
 
 	return nil

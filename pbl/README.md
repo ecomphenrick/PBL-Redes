@@ -69,21 +69,22 @@ docker compose down               # derruba
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `VAIJUNTO_RESERVA` | `10m` | prazo para pagar antes do assento voltar |
-| `VAIJUNTO_VARREDURA` | `30s` | frequência da checagem de reservas vencidas |
+| `VAIJUNTO_RESERVA` | `30s` | prazo para pagar antes do assento voltar |
+| `VAIJUNTO_VARREDURA` | `5s` | frequência da checagem de reservas vencidas |
 | `VAIJUNTO_DADOS` | `vaijunto.json` | arquivo onde o estado é gravado |
 | `VAIJUNTO_SERVIDOR` | `localhost:8080` | onde o cliente e a carga procuram o servidor |
 
-Para demonstrar a expiração sem esperar 10 minutos:
+Os prazos são os mesmos no Docker e fora dele. Para trocar, por exemplo para
+os 10 minutos:
 
 ```
-VAIJUNTO_RESERVA=30s VAIJUNTO_VARREDURA=5s go run ./servidor
+VAIJUNTO_RESERVA=10m go run ./servidor
 ```
 
 No PowerShell:
 
 ```
-$env:VAIJUNTO_RESERVA="30s"; $env:VAIJUNTO_VARREDURA="5s"; go run ./servidor
+$env:VAIJUNTO_RESERVA="10m"; go run ./servidor
 ```
 
 ## Estrutura

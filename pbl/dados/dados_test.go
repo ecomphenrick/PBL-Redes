@@ -615,3 +615,41 @@ func TestDataInvalida(t *testing.T) {
 		t.Error("cadastro com data fora do formato deveria dar erro")
 	}
 }
+
+// TestOrdemDaBusca: diretas antes de conexoes e, dentro de cada grupo, a mais
+// barata primeiro -- mesmo que tenha sido cadastrada por ultimo.
+func TestOrdemDaBusca(t *testing.T) {
+	b := NovoBanco()
+	cadastrar := func(motorista string, rota []string, preco int) {
+		t.Helper()
+		if _, err := b.CadastrarCarona(motorista, rota, "2026-09-14", 2, preco); err != nil {
+			t.Fatalf("nao consegui cadastrar: %v", err)
+		}
+	}
+
+	cadastrar("ana", []string{"Feira", "Salvador"}, 10)            // perna 1 da conexao
+	cadastrar("davi", []string{"Salvador", "Ilheus"}, 10)          // perna 2 da conexao (total 20)
+	cadastrar("ana", []string{"Feira", "Ilheus"}, 90)              // direta cara
+	cadastrar("davi", []string{"Feira", "Salvador", "Ilheus"}, 30) // direta barata (2 trechos = 60)
+
+	opcoes := b.Buscar("Feira", "Ilheus", "2026-09-14")
+	if len(opcoes) < 3 {
+		t.Fatalf("esperava pelo menos 3 opcoes, deu %d", len(opcoes))
+	}
+
+	// A conexao e a mais barata de todas (20), mas direta vem antes.
+	if len(opcoes[0].Itens) != 1 || opcoes[0].Preco != 60 {
+		t.Errorf("1a opcao deveria ser a direta de R$60, deu %d item(s) R$%d", len(opcoes[0].Itens), opcoes[0].Preco)
+	}
+	if len(opcoes[1].Itens) != 1 || opcoes[1].Preco != 90 {
+		t.Errorf("2a opcao deveria ser a direta de R$90, deu %d item(s) R$%d", len(opcoes[1].Itens), opcoes[1].Preco)
+	}
+	for i := 2; i < len(opcoes); i++ {
+		if len(opcoes[i].Itens) != 2 {
+			t.Errorf("opcao %d deveria ser conexao", i+1)
+		}
+		if i > 2 && opcoes[i].Preco < opcoes[i-1].Preco {
+			t.Errorf("conexoes fora de ordem de preco: R$%d depois de R$%d", opcoes[i].Preco, opcoes[i-1].Preco)
+		}
+	}
+}

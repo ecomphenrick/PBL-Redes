@@ -7,8 +7,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"vaijunto/protocolo"
+)
+
+// Timeouts do cliente. Sem eles, um IP errado ou um servidor travado deixaria
+// o programa parado sem mensagem nenhuma.
+const (
+	prazoConexao  = 5 * time.Second  // para conseguir conectar
+	prazoResposta = 10 * time.Second // para o servidor responder cada pedido
 )
 
 type cliente struct {
@@ -18,7 +26,7 @@ type cliente struct {
 }
 
 func main() {
-	conexao, err := net.Dial("tcp", endereco()) //abre conexão tcp com o server
+	conexao, err := net.DialTimeout("tcp", endereco(), prazoConexao) //abre conexão tcp com o server
 	if err != nil {
 		fmt.Println("nao consegui conectar:", err)
 		return
@@ -103,12 +111,14 @@ func (c *cliente) entrar() (string, bool) {
 }
 
 func (c *cliente) criarConta() (string, bool) {
-	usuario, ok := c.ler("novo usuario: ")
+	fmt.Println("  (Enter vazio cancela)")
+
+	usuario, ok := c.lerValido("novo usuario: ", func(string) error { return nil })
 	if !ok {
 		return "", false
 	}
 
-	senha, ok := c.ler("senha: ")
+	senha, ok := c.lerValido("senha: ", func(string) error { return nil })
 	if !ok {
 		return "", false
 	}
@@ -116,20 +126,19 @@ func (c *cliente) criarConta() (string, bool) {
 	fmt.Println("  1) motorista (oferece caronas)")
 	fmt.Println("  2) passageiro (procura caronas)")
 
-	escolha, ok := c.ler("tipo: ")
+	escolha, ok := c.lerValido("tipo: ", func(t string) error {
+		if t != "1" && t != "2" {
+			return fmt.Errorf("escolha 1 ou 2")
+		}
+		return nil
+	})
 	if !ok {
 		return "", false
 	}
 
-	var tipo string
-	switch escolha {
-	case "1":
-		tipo = "motorista"
-	case "2":
+	tipo := "motorista"
+	if escolha == "2" {
 		tipo = "passageiro"
-	default:
-		fmt.Println("  escolha 1 ou 2")
-		return "", false
 	}
 
 	r, err := c.pedir(protocolo.Pedido{ //pedido com ação (json e envia pro server)
@@ -176,18 +185,15 @@ func (c *cliente) menuMotorista() {
 		menu("MOTORISTA",
 			"1) cadastrar carona",
 			"2) minhas caronas",
-			"3) passageiros de uma carona",
-			"4) cancelar carona",
+			"3) cancelar carona",
 			"0) voltar")
 
 		switch c.opcao() {
 		case "1":
 			c.cadastrarCarona()
 		case "2":
-			c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas")
+			c.minhasCaronas()
 		case "3":
-			c.passageiros()
-		case "4":
 			c.cancelarCarona()
 		case "0", "":
 			return
@@ -198,31 +204,27 @@ func (c *cliente) menuMotorista() {
 }
 
 func (c *cliente) cadastrarCarona() {
-	texto, ok := c.ler("rota (cidades separadas por virgula): ")
+	fmt.Println("  (Enter vazio cancela)")
+
+	// Cada campo e conferido logo depois de digitado: se estiver errado,
+	// pergunta de novo na hora, em vez de descobrir so no fim.
+	texto, ok := c.lerValido("rota (cidades separadas por virgula): ", validarRota)
+	if !ok {
+		return
+	}
+	rota := separarRota(texto)
+
+	data, ok := c.lerValido("data (2026-09-14): ", validarData)
 	if !ok {
 		return
 	}
 
-	// "Feira, Salvador, Ilheus" vira ["Feira" "Salvador" "Ilheus"].
-	var rota []string
-	for _, cidade := range strings.Split(texto, ",") {
-		cidade = strings.TrimSpace(cidade)
-		if cidade != "" {
-			rota = append(rota, cidade)
-		}
-	}
-
-	data, ok := c.ler("data (2026-09-14): ")
+	assentos, ok := c.lerInteiro("assentos: ", 1)
 	if !ok {
 		return
 	}
 
-	assentos, ok := c.lerNumero("assentos: ")
-	if !ok {
-		return
-	}
-
-	preco, ok := c.lerNumero("preco por trecho: ")
+	preco, ok := c.lerInteiro("preco por trecho: ", 0)
 	if !ok {
 		return
 	}
@@ -236,14 +238,21 @@ func (c *cliente) cadastrarCarona() {
 	}))
 }
 
-// passageiros mostra quem esta em cada trecho de uma carona.
-func (c *cliente) passageiros() {
+// minhasCaronas lista as caronas do motorista e, se ele quiser, detalha uma
+// delas: ocupacao e passageiros de cada trecho.
+func (c *cliente) minhasCaronas() {
 	if !c.listar(protocolo.Pedido{Acao: "minhas_caronas"}, "voce ainda nao tem caronas") {
 		return
 	}
 
-	id, ok := c.lerNumero("numero da carona: ")
-	if !ok {
+	texto, ok := c.ler("\ndetalhar qual carona? (Enter volta): ")
+	if !ok || texto == "" {
+		return
+	}
+
+	id, err := strconv.Atoi(texto)
+	if err != nil {
+		fmt.Println("  precisa ser um numero")
 		return
 	}
 
@@ -296,17 +305,19 @@ func (c *cliente) menuPassageiro() {
 }
 
 func (c *cliente) buscarEReservar() {
-	origem, ok := c.ler("origem: ")
+	fmt.Println("  (Enter vazio cancela)")
+
+	origem, ok := c.lerValido("origem: ", validarCidade)
 	if !ok {
 		return
 	}
 
-	destino, ok := c.ler("destino: ")
+	destino, ok := c.lerValido("destino: ", validarCidade)
 	if !ok {
 		return
 	}
 
-	data, ok := c.ler("data (2026-09-14): ")
+	data, ok := c.lerValido("data (2026-09-14): ", validarData)
 	if !ok {
 		return
 	}
@@ -380,6 +391,10 @@ func (c *cliente) cancelarReserva() {
 }
 
 func (c *cliente) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
+	// O prazo vale para enviar E receber. E renovado a cada pedido, entao o
+	// tempo que a pessoa passa pensando no menu nao conta.
+	c.conexao.SetDeadline(time.Now().Add(prazoResposta))
+
 	if err := protocolo.EnviarPedido(c.conexao, p); err != nil {
 		return protocolo.Resposta{}, err
 	}
@@ -496,4 +511,79 @@ func (c *cliente) lerNumero(rotulo string) (int, bool) {
 	}
 
 	return n, true
+}
+
+// lerValido pergunta ate a resposta passar na validacao. Se estiver errada,
+// mostra o motivo e pergunta de novo na hora. Enter vazio desiste.
+func (c *cliente) lerValido(rotulo string, validar func(string) error) (string, bool) {
+	for {
+		texto, ok := c.ler(rotulo)
+		if !ok || texto == "" {
+			fmt.Println("  operacao cancelada")
+			return "", false
+		}
+
+		if err := validar(texto); err != nil {
+			fmt.Println("  " + err.Error())
+			continue
+		}
+
+		return texto, true
+	}
+}
+
+// lerInteiro pergunta ate vir um numero inteiro maior ou igual a minimo.
+func (c *cliente) lerInteiro(rotulo string, minimo int) (int, bool) {
+	texto, ok := c.lerValido(rotulo, func(t string) error {
+		n, err := strconv.Atoi(t)
+		if err != nil {
+			return fmt.Errorf("precisa ser um numero inteiro")
+		}
+		if n < minimo {
+			return fmt.Errorf("precisa ser pelo menos %d", minimo)
+		}
+		return nil
+	})
+	if !ok {
+		return 0, false
+	}
+
+	n, _ := strconv.Atoi(texto) // ja foi validado acima
+	return n, true
+}
+
+// separarRota transforma "Feira, Salvador, Ilheus" em ["Feira" "Salvador" "Ilheus"].
+func separarRota(texto string) []string {
+	var rota []string
+	for _, cidade := range strings.Split(texto, ",") {
+		cidade = strings.TrimSpace(cidade)
+		if cidade != "" {
+			rota = append(rota, cidade)
+		}
+	}
+	return rota
+}
+
+// As validacoes abaixo repetem, no cliente, as regras que o servidor ja
+// confere. O servidor continua validando: o cliente so avisa mais cedo.
+
+func validarRota(texto string) error {
+	if len(separarRota(texto)) < 2 {
+		return fmt.Errorf("a rota precisa de pelo menos 2 cidades, separadas por virgula")
+	}
+	return nil
+}
+
+func validarData(texto string) error {
+	if _, err := time.Parse("2006-01-02", texto); err != nil {
+		return fmt.Errorf("data invalida: use o formato AAAA-MM-DD (ex.: 2026-09-20)")
+	}
+	return nil
+}
+
+func validarCidade(texto string) error {
+	if strings.Contains(texto, ",") {
+		return fmt.Errorf("informe uma cidade so")
+	}
+	return nil
 }

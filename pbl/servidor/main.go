@@ -13,7 +13,7 @@ import (
 	"vaijunto/protocolo"
 )
 
-const intervaloPadrao = 30 * time.Second //intervalo de varredura
+const intervaloPadrao = 5 * time.Second //intervalo de varredura
 
 // Timeouts de socket. Sao var (e nao const) para os testes poderem encurtar.
 //
@@ -24,7 +24,7 @@ const intervaloPadrao = 30 * time.Second //intervalo de varredura
 // prazoEscrita: tempo maximo para conseguir entregar uma resposta. Se o
 // cliente parou de ler, a goroutine nao fica presa para sempre no Write.
 var (
-	tempoOcioso  = 15 * time.Minute
+	tempoOcioso  = 5 * time.Minute
 	prazoEscrita = 10 * time.Second
 )
 
@@ -52,7 +52,7 @@ func main() {
 	fmt.Println("servidor ouvindo em :8080")
 
 	for {
-		conexao, err := ouvinte.Accept() //bloqueia ate cliente conectar e retorna conexao
+		conexao, err := ouvinte.Accept() //bloqueia ate cliente conectar e retorna conexao unica do cliente.
 		if err != nil {
 			fmt.Println("erro ao aceitar conexao:", err)
 			continue //se falhar o cliente, continua esperando o proximo

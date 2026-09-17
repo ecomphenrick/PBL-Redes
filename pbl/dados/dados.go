@@ -13,8 +13,8 @@ import (
 	"vaijunto/protocolo"
 )
 
-// 10 min de reserva.
-var TempoDeReserva = 10 * time.Minute
+// 30s de reserva (mesmo valor no Docker e fora dele).
+var TempoDeReserva = 30 * time.Second
 
 // formatoData e o molde de data do Go: o layout e escrito com a data de
 // referencia 2006-01-02, e o Go entende "ano-mes-dia com zeros".

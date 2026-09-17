@@ -10,11 +10,6 @@ services:
     build: .
     ports:
       - "8080:8080"
-    environment:
-      # Prazos curtos para a demonstracao. Em uso normal, apague as duas
-      # linhas abaixo e o prazo volta a ser os 10 minutos do enunciado.
-      VAIJUNTO_RESERVA: 30s
-      VAIJUNTO_VARREDURA: 5s
     volumes:
       - dados:/dados
 

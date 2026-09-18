@@ -69,7 +69,7 @@ func LerPedido(leitor *bufio.Reader) (Pedido, error) {
 		return Pedido{}, err //retorna o erro que ocorreu e um pedido vazio
 	}
 
-	var p Pedido                                              //cria um pedido vazio
+	var p Pedido                                              //cria um pedido vazio como struct
 	if err := json.Unmarshal([]byte(linha), &p); err != nil { //recebe o json, transforma em um pedido, unmarshal usa bytes.
 		return Pedido{}, fmt.Errorf("%w: %v", ErrMensagemInvalida, err) //se o json nao estiver no formato correto.
 	}
@@ -91,7 +91,7 @@ func LerResposta(leitor *bufio.Reader) (Resposta, error) {
 
 // EnviarPedido escreve o Pedido como uma linha de JSON.
 func EnviarPedido(destino io.Writer, p Pedido) error {
-	return enviar(destino, p) //chama enviar
+	return enviar(destino, p) //chama enviar passando a conexão e o pedido.
 }
 
 // EnviarResposta escreve a Resposta como uma linha de JSON.
@@ -101,13 +101,13 @@ func EnviarResposta(destino io.Writer, r Resposta) error {
 
 // caminho contrario de ler.
 func enviar(destino io.Writer, valor any) error {
-	bytes, err := json.Marshal(valor) //struck para json bytes
+	bytes, err := json.Marshal(valor) //converte struct para json com marshal e guarda em bytes
 	if err != nil {
 		return err
 	}
 
-	bytes = append(bytes, '\n')
+	bytes = append(bytes, '\n') //adiciona a quebra de linha.
 
-	_, err = destino.Write(bytes)
+	_, err = destino.Write(bytes) //escreve no socket e passa pela rede.
 	return err
 }

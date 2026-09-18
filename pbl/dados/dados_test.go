@@ -9,12 +9,10 @@ import (
 	"vaijunto/protocolo"
 )
 
-// trecho monta o item "carona X, da cidade De ate a cidade Ate".
 func trecho(caronaID, de, ate int) []protocolo.Item {
 	return []protocolo.Item{{CaronaID: caronaID, De: de, Ate: ate}}
 }
 
-// bancoComCarona devolve um banco novo com uma carona ja cadastrada.
 func bancoComCarona(t *testing.T, rota []string, assentos int) (*Banco, int) {
 	t.Helper()
 
@@ -27,37 +25,15 @@ func bancoComCarona(t *testing.T, rota []string, assentos int) (*Banco, int) {
 	return b, id
 }
 
-// ---------------------------------------------------------------------------
-// O TESTE PRINCIPAL: concorrencia
-// ---------------------------------------------------------------------------
-
-// TestReservaConcorrente e o teste que prova o tratamento de concorrencia.
-//
-// Uma carona com UM assento e 50 goroutines tentando reservar ao mesmo tempo.
-// So uma pode vencer. Sem o mutex em Reservar, varias leriam "1 livre" antes
-// de qualquer uma escrever, e o sistema venderia o mesmo assento varias vezes.
-//
-// Rode com o detector de corrida:
-//
-//	go test -race ./...
-//
-// Para ver o teste falhar de proposito, comente o b.mu.Lock() de Reservar.
 func TestReservaConcorrente(t *testing.T) {
 	const tentativas = 200
 
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 1)
 
-	// Canal com espaco para todos: cada goroutine que conseguir reservar
-	// joga um aviso aqui. Usar canal evita precisar de outro mutex so para
-	// contar os sucessos.
 	sucessos := make(chan int, tentativas)
 
-	// WaitGroup e o contador que espera todas as goroutines terminarem.
 	var wg sync.WaitGroup
 
-	// largada trava todas as goroutines no mesmo ponto. Sem isso, a primeira
-	// a nascer ja teria reservado antes de a ultima existir, e nao haveria
-	// disputa nenhuma para testar.
 	largada := make(chan struct{})
 
 	for i := 0; i < tentativas; i++ {
@@ -66,7 +42,7 @@ func TestReservaConcorrente(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			<-largada // espera aqui ate o canal ser fechado
+			<-largada
 
 			if _, err := b.Reservar("bruno", trecho(id, 0, 1)); err == nil {
 				sucessos <- 1
@@ -74,8 +50,8 @@ func TestReservaConcorrente(t *testing.T) {
 		}()
 	}
 
-	close(largada) // solta as 50 de uma vez
-	wg.Wait()      // espera todas terminarem
+	close(largada)
+	wg.Wait()
 	close(sucessos)
 
 	if n := len(sucessos); n != 1 {
@@ -92,17 +68,6 @@ func TestReservaConcorrente(t *testing.T) {
 	}
 }
 
-// TestContagemDeAssentos e o teste que pega a falta do mutex de forma
-// CONFIAVEL.
-//
-// O teste acima (1 assento, muitas goroutines) e a garantia de negocio, mas
-// sozinho ele nao detecta bem o bug: quem largar primeiro ja ocupou o assento
-// antes de as outras nascerem, e todas as demais falham "corretamente".
-//
-// Aqui e diferente: sao N assentos para N goroutines, entao TODAS entram na
-// secao critica e TODAS escrevem. Sem o mutex, dois "Ocupados[t]++"
-// simultaneos viram um so (o classico "lost update") e a contagem final fica
-// MENOR que N.
 func TestContagemDeAssentos(t *testing.T) {
 	const pedidos = 2000
 
@@ -134,9 +99,6 @@ func TestContagemDeAssentos(t *testing.T) {
 	}
 }
 
-// TestExpiracaoConcorrente roda a expiracao ao mesmo tempo que as reservas.
-// Sao duas goroutines mexendo no MESMO contador de assentos por caminhos
-// diferentes -- exatamente o cenario do servidor de verdade.
 func TestExpiracaoConcorrente(t *testing.T) {
 	original := TempoDeReserva
 	TempoDeReserva = time.Millisecond
@@ -164,20 +126,12 @@ func TestExpiracaoConcorrente(t *testing.T) {
 
 	wg.Wait()
 
-	// O numero final depende do sorteio das goroutines, mas o estado tem que
-	// ser COERENTE: nunca negativo, nunca acima do total de assentos.
 	c := b.acharCarona(id)
 	if c.Ocupados[0] < 0 || c.Ocupados[0] > c.Assentos {
 		t.Errorf("contador de assentos incoerente: %d (total %d)", c.Ocupados[0], c.Assentos)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Atomicidade
-// ---------------------------------------------------------------------------
-
-// TestReservaAtomica confere o "pegou um trecho nao fica sem o outro".
-// Se o segundo item falhar, o primeiro NAO pode ter sido aplicado.
 func TestReservaAtomica(t *testing.T) {
 	b, livre := bancoComCarona(t, []string{"Ilheus", "Porto Seguro"}, 2)
 
@@ -186,14 +140,10 @@ func TestReservaAtomica(t *testing.T) {
 		t.Fatalf("nao consegui cadastrar: %v", err)
 	}
 
-	// Enche a segunda carona.
 	if _, err := b.Reservar("carla", trecho(cheia, 0, 1)); err != nil {
 		t.Fatalf("a primeira reserva deveria funcionar: %v", err)
 	}
 
-	// Agora pede as duas juntas. A carona livre vem PRIMEIRO de proposito:
-	// se a implementacao aplicasse item a item, ela ja teria sido ocupada
-	// quando a segunda falhasse.
 	_, err = b.Reservar("bruno", []protocolo.Item{
 		{CaronaID: livre, De: 0, Ate: 1},
 		{CaronaID: cheia, De: 0, Ate: 1},
@@ -207,9 +157,6 @@ func TestReservaAtomica(t *testing.T) {
 	}
 }
 
-// TestReservaMultiplaFunciona garante que o caso feliz de duas caronas
-// tambem funciona -- senao o teste acima passaria com um Reservar que
-// simplesmente recusa tudo.
 func TestReservaMultiplaFunciona(t *testing.T) {
 	b, primeira := bancoComCarona(t, []string{"Feira", "Salvador"}, 1)
 
@@ -233,16 +180,9 @@ func TestReservaMultiplaFunciona(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Disponibilidade por trecho
-// ---------------------------------------------------------------------------
-
-// TestDisponibilidadePorTrecho e o comportamento que diferencia o sistema:
-// ocupar um trecho NAO ocupa a carona inteira.
 func TestDisponibilidadePorTrecho(t *testing.T) {
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador", "Ilheus"}, 1)
 
-	// Reserva so o primeiro trecho.
 	if _, err := b.Reservar("bruno", trecho(id, 0, 1)); err != nil {
 		t.Fatalf("deveria funcionar: %v", err)
 	}
@@ -266,7 +206,6 @@ func TestDisponibilidadePorTrecho(t *testing.T) {
 	}
 }
 
-// TestBuscaSentidoUnico: a carona so anda para frente.
 func TestBuscaSentidoUnico(t *testing.T) {
 	b, _ := bancoComCarona(t, []string{"Feira", "Salvador", "Ilheus"}, 2)
 
@@ -284,7 +223,6 @@ func TestBuscaSentidoUnico(t *testing.T) {
 	}
 }
 
-// TestBuscaComConexao: duas caronas que juntas levam o passageiro ao destino.
 func TestBuscaComConexao(t *testing.T) {
 	b, _ := bancoComCarona(t, []string{"Feira", "Salvador"}, 2)
 
@@ -301,21 +239,14 @@ func TestBuscaComConexao(t *testing.T) {
 		t.Errorf("a opcao deveria ter 2 itens, tem %d", n)
 	}
 
-	// 30 do primeiro trecho + 40 do segundo.
 	if opcoes[0].Preco != 70 {
 		t.Errorf("preco esperado 70, deu %d", opcoes[0].Preco)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Expiracao e pagamento
-// ---------------------------------------------------------------------------
-
-// TestExpiracaoDevolveAssento: quem nao paga perde o assento.
 func TestExpiracaoDevolveAssento(t *testing.T) {
 	original := TempoDeReserva
-	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
-	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+
 	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
@@ -325,7 +256,6 @@ func TestExpiracaoDevolveAssento(t *testing.T) {
 		t.Fatalf("deveria funcionar: %v", err)
 	}
 
-	// Antes de expirar, ninguem mais consegue.
 	if _, err := b.Reservar("carla", trecho(id, 0, 1)); err == nil {
 		t.Fatal("carla nao deveria conseguir: o assento esta ocupado")
 	}
@@ -336,17 +266,14 @@ func TestExpiracaoDevolveAssento(t *testing.T) {
 		t.Fatalf("esperava 1 reserva expirada, deu %d", n)
 	}
 
-	// Agora sim.
 	if _, err := b.Reservar("carla", trecho(id, 0, 1)); err != nil {
 		t.Errorf("carla deveria conseguir depois da expiracao: %v", err)
 	}
 }
 
-// TestReservaPagaNaoExpira: pagou, o assento e seu para sempre.
 func TestReservaPagaNaoExpira(t *testing.T) {
 	original := TempoDeReserva
-	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
-	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+
 	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
@@ -372,7 +299,6 @@ func TestReservaPagaNaoExpira(t *testing.T) {
 	}
 }
 
-// TestRegrasDePagamento cobre os erros possiveis ao pagar.
 func TestRegrasDePagamento(t *testing.T) {
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador"}, 2)
 
@@ -395,14 +321,9 @@ func TestRegrasDePagamento(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Login e cadastro
-// ---------------------------------------------------------------------------
-
 func TestAutenticar(t *testing.T) {
 	b := NovoBanco()
 
-	// O banco nasce vazio: o teste cria a conta de que precisa.
 	if err := b.CadastrarUsuario("ana", "123", "motorista"); err != nil {
 		t.Fatalf("nao consegui criar a conta de teste: %v", err)
 	}
@@ -457,15 +378,11 @@ func TestCadastrarUsuario(t *testing.T) {
 		}
 	}
 
-	// O cadastro repetido nao pode ter trocado a senha do dono original.
 	if _, ok := b.Autenticar("henrick", "senha1"); !ok {
 		t.Error("a tentativa repetida sobrescreveu o usuario original")
 	}
 }
 
-// TestCadastroConcorrente: 500 goroutines tentando criar O MESMO login.
-// So uma pode vencer. Se a checagem "ja existe" estivesse fora do Lock,
-// varias passariam pela verificacao antes de qualquer uma escrever.
 func TestCadastroConcorrente(t *testing.T) {
 	const tentativas = 500
 
@@ -495,12 +412,6 @@ func TestCadastroConcorrente(t *testing.T) {
 	}
 }
 
-// TestCadastrosSimultaneos e o par do TestContagemDeAssentos, agora para o
-// mapa de usuarios: 300 logins DIFERENTES criados ao mesmo tempo.
-//
-// Como cada goroutine escreve mesmo (nenhuma e recusada), todas mexem no mapa
-// em paralelo. Sem o Lock, o proprio runtime do Go derruba o programa com
-// "fatal error: concurrent map writes" -- mapa nao suporta escrita simultanea.
 func TestCadastrosSimultaneos(t *testing.T) {
 	const quantos = 300
 
@@ -552,7 +463,6 @@ func TestCadastroInvalido(t *testing.T) {
 	}
 }
 
-// TestOcupadosNasceZerado: uma rota de N cidades tem N-1 contadores.
 func TestOcupadosNasceZerado(t *testing.T) {
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador", "Ilheus", "Porto Seguro"}, 3)
 
@@ -568,9 +478,6 @@ func TestOcupadosNasceZerado(t *testing.T) {
 	}
 }
 
-// TestVencidaExpiraSemEsperarVarredura: passou do prazo, a reserva ja conta
-// como expirada na proxima operacao, mesmo que a goroutine de varredura ainda
-// nao tenha rodado. Antes dava para pagar uma reserva vencida nesse intervalo.
 func TestVencidaExpiraSemEsperarVarredura(t *testing.T) {
 	original := TempoDeReserva
 	TempoDeReserva = 50 * time.Millisecond
@@ -585,7 +492,6 @@ func TestVencidaExpiraSemEsperarVarredura(t *testing.T) {
 
 	time.Sleep(80 * time.Millisecond)
 
-	// Repare: ninguem chamou ExpirarVencidas.
 	if err := b.Pagar("bruno", reserva); err == nil {
 		t.Error("reserva vencida nao pode ser paga")
 	}
@@ -594,7 +500,6 @@ func TestVencidaExpiraSemEsperarVarredura(t *testing.T) {
 	}
 }
 
-// TestDataInvalida: so aceita AAAA-MM-DD que exista no calendario.
 func TestDataInvalida(t *testing.T) {
 	validas := []string{"2026-09-20", "2028-02-29"}
 	invalidas := []string{"", "20/09/2026", "2026-9-20", "amanha", "2026-02-30", "2026-13-01"}
@@ -616,8 +521,6 @@ func TestDataInvalida(t *testing.T) {
 	}
 }
 
-// TestOrdemDaBusca: diretas antes de conexoes e, dentro de cada grupo, a mais
-// barata primeiro -- mesmo que tenha sido cadastrada por ultimo.
 func TestOrdemDaBusca(t *testing.T) {
 	b := NovoBanco()
 	cadastrar := func(motorista string, rota []string, preco int) {
@@ -627,17 +530,16 @@ func TestOrdemDaBusca(t *testing.T) {
 		}
 	}
 
-	cadastrar("ana", []string{"Feira", "Salvador"}, 10)            // perna 1 da conexao
-	cadastrar("davi", []string{"Salvador", "Ilheus"}, 10)          // perna 2 da conexao (total 20)
-	cadastrar("ana", []string{"Feira", "Ilheus"}, 90)              // direta cara
-	cadastrar("davi", []string{"Feira", "Salvador", "Ilheus"}, 30) // direta barata (2 trechos = 60)
+	cadastrar("ana", []string{"Feira", "Salvador"}, 10)
+	cadastrar("davi", []string{"Salvador", "Ilheus"}, 10)
+	cadastrar("ana", []string{"Feira", "Ilheus"}, 90)
+	cadastrar("davi", []string{"Feira", "Salvador", "Ilheus"}, 30)
 
 	opcoes := b.Buscar("Feira", "Ilheus", "2026-09-14")
 	if len(opcoes) < 3 {
 		t.Fatalf("esperava pelo menos 3 opcoes, deu %d", len(opcoes))
 	}
 
-	// A conexao e a mais barata de todas (20), mas direta vem antes.
 	if len(opcoes[0].Itens) != 1 || opcoes[0].Preco != 60 {
 		t.Errorf("1a opcao deveria ser a direta de R$60, deu %d item(s) R$%d", len(opcoes[0].Itens), opcoes[0].Preco)
 	}

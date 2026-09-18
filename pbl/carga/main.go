@@ -1,15 +1,3 @@
-// Programa de teste de carga: N clientes REAIS, cada um com a sua conexao TCP,
-// disputando os mesmos assentos ao mesmo tempo contra o servidor de verdade.
-//
-// Os testes do pacote dados chamam as funcoes direto. Aqui tudo passa pela
-// rede: socket, protocolo JSON, goroutine por conexao no servidor e o mutex
-// do Banco. E o teste que mostra o sistema inteiro aguentando concorrencia.
-//
-// Com o servidor ja rodando:
-//
-//	go run ./carga
-//	go run ./carga -clientes 500 -assentos 25
-//	go run ./carga -servidor 192.168.0.10:8080
 package main
 
 import (
@@ -45,21 +33,12 @@ func main() {
 	fmt.Println("\nPASSOU")
 }
 
-// ---------------------------------------------------------------------------
-// O cenario
-// ---------------------------------------------------------------------------
-
 func rodar(endereco string, clientes, assentos int) error {
-	// Sufixo unico: os logins desta rodada nao colidem com nada que ja exista
-	// no servidor, entao o teste pode rodar varias vezes seguidas. A data e
-	// longe no futuro para nao se misturar com caronas de verdade (e precisa
-	// estar no formato AAAA-MM-DD, senao o servidor recusa).
+
 	tag := strconv.FormatInt(time.Now().UnixNano(), 36)
 	data := "2099-12-31"
 
 	fmt.Printf("servidor %s | %d clientes | %d lugares disputados\n\n", endereco, clientes, assentos)
-
-	// ---- 1. O motorista monta o cenario ----
 
 	motorista, err := conectar(endereco)
 	if err != nil {
@@ -71,9 +50,6 @@ func rodar(endereco string, clientes, assentos int) error {
 		return err
 	}
 
-	// A primeira carona tem o DOBRO de lugares da segunda. Se a atomicidade
-	// falhar -- uma reserva ocupar a primeira sem ocupar a segunda -- sobra
-	// lugar ocupado na primeira sem par, e a verificacao do passo 4 enxerga.
 	a, err := motorista.exigir(protocolo.Pedido{
 		Acao: "cadastrar", Rota: []string{"Feira", "Salvador"},
 		Data: data, Assentos: 2 * assentos, Preco: 30,
@@ -90,7 +66,6 @@ func rodar(endereco string, clientes, assentos int) error {
 		return err
 	}
 
-	// O itinerario disputado usa as DUAS caronas: tudo ou nada.
 	itinerario := []protocolo.Item{
 		{CaronaID: a.CaronaID, De: 0, Ate: 1},
 		{CaronaID: b.CaronaID, De: 0, Ate: 1},
@@ -99,18 +74,9 @@ func rodar(endereco string, clientes, assentos int) error {
 	fmt.Printf("itinerario: carona %d Feira->Salvador (%d lugares) + carona %d Salvador->Ilheus (%d lugares)\n",
 		a.CaronaID, 2*assentos, b.CaronaID, assentos)
 
-	// ---- 2. Os clientes conectam, fazem login e disparam juntos ----
-
 	resultados := make(chan resultado, clientes)
 	largada := make(chan struct{})
 
-	// A preparacao (conectar + login) roda com no maximo 50 clientes por vez.
-	//
-	// O que este teste mede e a DISPUTA pela reserva, e ela continua com todos
-	// juntos, depois da largada. Ja abrir centenas de conexoes no mesmo
-	// milissegundo so estoura a fila de conexoes pendentes do sistema
-	// operacional, que tem tamanho limitado e recusa o excedente antes de o
-	// servidor sequer ver a conexao.
 	preparando := make(chan struct{}, 50)
 
 	var prontos, terminados sync.WaitGroup
@@ -122,17 +88,16 @@ func rodar(endereco string, clientes, assentos int) error {
 		go func(n int) {
 			defer terminados.Done()
 
-			// Preparacao: cada cliente tem a SUA conexao e o SEU usuario.
-			preparando <- struct{}{} // pega uma das 50 vagas
+			preparando <- struct{}{}
 			c, err := conectar(endereco)
 			if err == nil {
 				defer c.Close()
 				err = entrar(c, fmt.Sprintf("pas_%s_%d", tag, n), "passageiro")
 			}
-			<-preparando // devolve a vaga
+			<-preparando
 
 			prontos.Done()
-			<-largada // espera todos estarem prontos
+			<-largada
 
 			if err != nil {
 				resultados <- resultado{erro: err}
@@ -162,8 +127,6 @@ func rodar(endereco string, clientes, assentos int) error {
 	terminados.Wait()
 	duracao := time.Since(inicio)
 	close(resultados)
-
-	// ---- 3. Contagem ----
 
 	var latencias []time.Duration
 	ids := map[int]bool{}
@@ -196,8 +159,6 @@ func rodar(endereco string, clientes, assentos int) error {
 	fmt.Printf("tempo da disputa:   %s\n", duracao.Round(time.Millisecond))
 	imprimirLatencias(latencias)
 
-	// ---- 4. Verificacao ----
-
 	fmt.Println("\nverificacao:")
 	v := &verificacao{}
 
@@ -214,9 +175,6 @@ func rodar(endereco string, clientes, assentos int) error {
 		len(ids) == aceitas,
 		fmt.Sprintf("%d reservas mas so %d numeros diferentes", aceitas, len(ids)))
 
-	// Atomicidade: uma sonda conta, pelo proprio protocolo, quantos lugares
-	// sobraram em cada carona. Se toda reserva aceita ocupou as DUAS, sobra
-	// exatamente (lugares - aceitas) em cada uma.
 	sonda, err := conectar(endereco)
 	if err != nil {
 		return fmt.Errorf("a sonda nao conectou: %w", err)
@@ -235,7 +193,6 @@ func rodar(endereco string, clientes, assentos int) error {
 		fmt.Sprintf("sobraram %d na primeira (esperado %d) e %d na segunda (esperado %d)",
 			sobraA, 2*assentos-aceitas, sobraB, assentos-aceitas))
 
-	// Limpeza: cancelar as caronas desfaz tudo que esta rodada criou.
 	for _, id := range []int{a.CaronaID, b.CaronaID} {
 		motorista.pedir(protocolo.Pedido{Acao: "cancelar_carona", CaronaID: id})
 	}
@@ -246,8 +203,6 @@ func rodar(endereco string, clientes, assentos int) error {
 	return nil
 }
 
-// contarVagas descobre quantos lugares sobraram numa carona reservando um por
-// um ate o servidor recusar. Usa so o protocolo, sem olhar dentro do servidor.
 func contarVagas(c *conexao, caronaID, limite int) (int, error) {
 	item := []protocolo.Item{{CaronaID: caronaID, De: 0, Ate: 1}}
 
@@ -261,23 +216,14 @@ func contarVagas(c *conexao, caronaID, limite int) (int, error) {
 		}
 	}
 
-	// Mais vagas do que a carona tem: o estado do servidor esta corrompido.
 	return limite + 1, nil
 }
 
-// ---------------------------------------------------------------------------
-// Pecas de apoio
-// ---------------------------------------------------------------------------
-
-// conexao e um cliente minimo: o socket e o leitor com buffer dele.
 type conexao struct {
 	net.Conn
 	leitor *bufio.Reader
 }
 
-// Prazos do teste de carga. O de resposta e folgado porque, com centenas de
-// clientes disputando o mesmo mutex, uma resposta pode demorar mais que o normal
-// sem que isso seja falha.
 const (
 	prazoConexao  = 5 * time.Second
 	prazoResposta = 30 * time.Second
@@ -300,8 +246,6 @@ func (c *conexao) pedir(p protocolo.Pedido) (protocolo.Resposta, error) {
 	return protocolo.LerResposta(c.leitor)
 }
 
-// exigir e o pedir das etapas de preparacao: ali uma recusa do servidor
-// tambem e erro, porque o teste nao consegue seguir sem aquilo.
 func (c *conexao) exigir(p protocolo.Pedido) (protocolo.Resposta, error) {
 	r, err := c.pedir(p)
 	if err != nil {
@@ -313,7 +257,6 @@ func (c *conexao) exigir(p protocolo.Pedido) (protocolo.Resposta, error) {
 	return r, nil
 }
 
-// entrar cria um usuario novo e faz login com ele na mesma conexao.
 func entrar(c *conexao, login, tipo string) error {
 	if _, err := c.exigir(protocolo.Pedido{Acao: "registrar", Usuario: login, Senha: "carga", Tipo: tipo}); err != nil {
 		return err

@@ -9,10 +9,6 @@ import (
 	"vaijunto/protocolo"
 )
 
-// ---------------------------------------------------------------------------
-// Cancelar reserva
-// ---------------------------------------------------------------------------
-
 func TestCancelarReservaDevolveAssento(t *testing.T) {
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador", "Ilheus"}, 1)
 
@@ -38,8 +34,7 @@ func TestCancelarReservaDevolveAssento(t *testing.T) {
 
 func TestRegrasDeCancelarReserva(t *testing.T) {
 	original := TempoDeReserva
-	// Prazo curto, mas com folga: Reservar e Pagar agora expiram o que venceu
-	// na hora, entao 1ms poderia vencer entre uma linha e outra do teste.
+
 	TempoDeReserva = 50 * time.Millisecond
 	defer func() { TempoDeReserva = original }()
 
@@ -73,20 +68,11 @@ func TestRegrasDeCancelarReserva(t *testing.T) {
 		t.Error("reserva cancelada nao pode ser paga")
 	}
 
-	// A expirada ja tinha devolvido o assento dela. Se o cancelamento
-	// devolvesse de novo, o contador ficaria NEGATIVO.
 	if n := b.acharCarona(id).Ocupados[0]; n != 0 {
 		t.Errorf("esperava 0 assentos ocupados, deu %d", n)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Cancelar carona
-// ---------------------------------------------------------------------------
-
-// TestCancelarCaronaCancelaConexaoInteira e o caso que exige cuidado: a
-// reserva do bruno usa duas caronas. Quando uma delas e cancelada, a reserva
-// inteira cai, e o assento dele na OUTRA carona tambem precisa voltar.
 func TestCancelarCaronaCancelaConexaoInteira(t *testing.T) {
 	b, primeira := bancoComCarona(t, []string{"Feira", "Salvador"}, 2)
 
@@ -123,12 +109,10 @@ func TestCancelarCaronaCancelaConexaoInteira(t *testing.T) {
 		t.Errorf("a reserva da carla nao usa a carona cancelada, deveria seguir pendente, esta %q", r.Estado)
 	}
 
-	// Na primeira carona so pode sobrar o assento da carla.
 	if n := b.acharCarona(primeira).Ocupados[0]; n != 1 {
 		t.Errorf("a primeira carona deveria ter 1 ocupado (so a carla), tem %d", n)
 	}
 
-	// Carona cancelada some da busca e recusa reserva nova.
 	if n := len(b.Buscar("Salvador", "Ilheus", "2026-09-14")); n != 0 {
 		t.Errorf("carona cancelada nao deveria aparecer na busca, apareceu %d vez(es)", n)
 	}
@@ -154,18 +138,14 @@ func TestRegrasDeCancelarCarona(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Passageiros por trecho
-// ---------------------------------------------------------------------------
-
 func TestPassageirosPorTrecho(t *testing.T) {
 	b, id := bancoComCarona(t, []string{"Feira", "Salvador", "Ilheus"}, 2)
 
-	if _, err := b.Reservar("bruno", trecho(id, 0, 2)); err != nil { // os dois trechos
+	if _, err := b.Reservar("bruno", trecho(id, 0, 2)); err != nil {
 		t.Fatalf("deveria funcionar: %v", err)
 	}
 
-	carla, err := b.Reservar("carla", trecho(id, 1, 2)) // so o segundo
+	carla, err := b.Reservar("carla", trecho(id, 1, 2))
 	if err != nil {
 		t.Fatalf("deveria funcionar: %v", err)
 	}
@@ -176,7 +156,6 @@ func TestPassageirosPorTrecho(t *testing.T) {
 		t.Fatalf("a dona deveria ver os passageiros: %v", err)
 	}
 
-	// linhas[0] e o cabecalho; depois vem uma linha por trecho.
 	if len(linhas) != 3 {
 		t.Fatalf("esperava cabecalho + 2 trechos, deu %d linhas: %v", len(linhas), linhas)
 	}
@@ -195,14 +174,6 @@ func TestPassageirosPorTrecho(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Concorrencia nos cancelamentos
-// ---------------------------------------------------------------------------
-
-// TestReservaECancelamentoConcorrentes: 1000 goroutines reservam e cancelam ao
-// mesmo tempo. Todas escrevem DUAS vezes (ocupar e liberar), entao se o mutex
-// faltar em qualquer das duas funcoes, incrementos e decrementos se perdem e
-// o contador final nao volta a zero.
 func TestReservaECancelamentoConcorrentes(t *testing.T) {
 	const pares = 1000
 
@@ -236,9 +207,6 @@ func TestReservaECancelamentoConcorrentes(t *testing.T) {
 	}
 }
 
-// TestCancelarCaronaDuranteReservas: o motorista cancela enquanto 500
-// passageiros tentam reservar. Nao importa quem chega primeiro; o que nao pode
-// acontecer e sobrar reserva ativa numa carona cancelada.
 func TestCancelarCaronaDuranteReservas(t *testing.T) {
 	const pedidos = 500
 
@@ -252,7 +220,7 @@ func TestCancelarCaronaDuranteReservas(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-largada
-			b.Reservar("bruno", trecho(id, 0, 1)) // pode falhar se o cancelamento vier antes
+			b.Reservar("bruno", trecho(id, 0, 1))
 		}()
 	}
 
